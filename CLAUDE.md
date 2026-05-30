@@ -23,10 +23,13 @@ bun run db:studio        # open Drizzle Studio
 
 ## Local dev setup
 
+Toolchain pinned via Nix flake — `nix develop` (or direnv `use flake`) provides `bun`, `biome`, `node`, `docker-compose`, `postgresql_17`, `gh`. Do not install these via `nix profile`.
+
 Docker Compose is required before any dev or integration test run:
 
 ```bash
-docker compose up -d     # starts postgres:16-alpine + dxflrs/garage:v1.0.1 + mailhog
+nix develop              # or: direnv allow (once)
+docker compose up -d     # starts postgres:17-alpine + dxflrs/garage:v2.3.0 + mailhog
 bun run db:migrate       # always run after compose up if schema changed
 ```
 
