@@ -662,9 +662,11 @@ Chart Helm `deploy/helm/airbarium-api/` :
 - `Deployment` worker cron séparé, 1 replica fixe, `command: ["bun", "run", "cron"]`
 
 Dépendances Helm (chartes séparées) :
-- Postgres : Bitnami chart
+- Postgres : **CloudNativePG operator** + `Cluster` CR (Postgres 17). Apporte HA, failover automatique, backups continus (Barman Cloud vers Garage en option), monitoring Prometheus natif. Bien plus production-grade qu'un chart Bitnami pour un coût opérationnel équivalent.
 - Garage : chart community ou Deployment+StatefulSet custom (~80 lignes YAML)
 - Pas de MailHog en prod : provider externe configuré via `SMTP_URL`
+
+Note : CloudNativePG est un opérateur Kubernetes, il ne tourne pas en local. Le `docker-compose` dev et les services GitHub Actions continuent d'utiliser l'image `postgres:17-alpine` directement.
 
 ---
 
