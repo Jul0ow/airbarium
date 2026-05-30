@@ -597,7 +597,7 @@ services:
       test: ['CMD-SHELL', 'pg_isready -U airbarium']
 
   garage:
-    image: dxflrs/garage:v1.0.1
+    image: dxflrs/garage:v2.3.0
     ports: ['3900:3900', '3902:3902']
     volumes:
       - garage-meta:/var/lib/garage/meta
@@ -647,7 +647,7 @@ bun run dev                    # hot-reload via bun --watch
 
 `.github/workflows/ci.yaml` :
 - Trigger : push + pull_request
-- Services : Postgres 17 + Garage v1.0.1 dans le job
+- Services : Postgres 17 + Garage v2.3.0 dans le job
 - Étapes : `setup-bun`, `install`, `typecheck`, `lint`, `db:migrate`, `test`
 - PlantNet, Wikipedia, SMTP : **mockés** dans les tests
 
