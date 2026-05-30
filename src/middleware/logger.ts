@@ -21,23 +21,25 @@ export const httpLogger = (): MiddlewareHandler<{
     c.set('log', child);
 
     const start = performance.now();
-    await next();
-    const latency_ms = Math.round((performance.now() - start) * 100) / 100;
+    try {
+      await next();
+    } finally {
+      const latency_ms = Math.round((performance.now() - start) * 100) / 100;
+      const status = c.res?.status ?? 500;
+      const payload = {
+        method: c.req.method,
+        path: c.req.path,
+        status,
+        latency_ms,
+      };
 
-    const status = c.res.status;
-    const payload = {
-      method: c.req.method,
-      path: c.req.path,
-      status,
-      latency_ms,
-    };
-
-    if (status >= 500) {
-      child.error(payload, 'request');
-    } else if (status >= 400) {
-      child.warn(payload, 'request');
-    } else {
-      child.info(payload, 'request');
+      if (status >= 500) {
+        child.error(payload, 'request');
+      } else if (status >= 400) {
+        child.warn(payload, 'request');
+      } else {
+        child.info(payload, 'request');
+      }
     }
   };
 };

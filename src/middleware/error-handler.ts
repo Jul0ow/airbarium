@@ -1,17 +1,40 @@
-import type { Context, ErrorHandler } from 'hono';
+import type { ErrorHandler } from 'hono';
 import { HTTPException } from 'hono/http-exception';
-import type { ContentfulStatusCode } from 'hono/utils/http-status';
-import type { Logger } from 'pino';
-import { logger as rootLogger } from '@/middleware/logger';
+import type { ContentfulStatusCode, StatusCode } from 'hono/utils/http-status';
+import type { AppEnv } from '@/app-env';
 import { AppError } from '@/utils/errors';
 
-const ctxLog = (c: Context): Logger => {
-  const log = c.get('log');
-  return (log as Logger | undefined) ?? rootLogger;
+const httpStatusCode = (status: StatusCode): string => {
+  switch (status) {
+    case 400:
+      return 'BAD_REQUEST';
+    case 401:
+      return 'UNAUTHORIZED';
+    case 403:
+      return 'FORBIDDEN';
+    case 404:
+      return 'NOT_FOUND';
+    case 405:
+      return 'METHOD_NOT_ALLOWED';
+    case 409:
+      return 'CONFLICT';
+    case 413:
+      return 'PAYLOAD_TOO_LARGE';
+    case 422:
+      return 'UNPROCESSABLE_ENTITY';
+    case 429:
+      return 'TOO_MANY_REQUESTS';
+    case 502:
+      return 'BAD_GATEWAY';
+    case 503:
+      return 'SERVICE_UNAVAILABLE';
+    default:
+      return status >= 500 ? 'INTERNAL' : 'HTTP_ERROR';
+  }
 };
 
-export const errorHandler: ErrorHandler = (err, c) => {
-  const log = ctxLog(c);
+export const errorHandler: ErrorHandler<AppEnv> = (err, c) => {
+  const log = c.get('log');
 
   if (err instanceof AppError) {
     log.warn({ code: err.code, status: err.status, details: err.details }, err.message);
@@ -28,7 +51,12 @@ export const errorHandler: ErrorHandler = (err, c) => {
   }
 
   if (err instanceof HTTPException) {
-    return err.getResponse();
+    const code = httpStatusCode(err.status);
+    log.warn({ code, status: err.status }, err.message);
+    return c.json(
+      { error: { code, message: err.message || code } },
+      err.status as ContentfulStatusCode,
+    );
   }
 
   log.error({ err }, 'unhandled error');
