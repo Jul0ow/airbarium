@@ -1,0 +1,30 @@
+# Minimal single-node dev config. NOT for production.
+# Bucket creation and key issuance are handled in Lot 4 (Storage).
+
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "lmdb"
+
+replication_factor = 1
+
+rpc_bind_addr = "[::]:3901"
+rpc_public_addr = "garage:3901"
+# Dev-only throwaway secret. Single-node cluster, no inter-node RPC happens.
+# Production secrets are injected via Helm values + Kubernetes Secret (Lot 8).
+rpc_secret = "b80d502fc6b37b60a8415511d41bcf9bcbe521e18f27dd10239ee5f3fb1e4051"
+
+[s3_api]
+api_bind_addr = "[::]:3900"
+s3_region = "garage"
+root_domain = ".s3.garage.localhost"
+
+[s3_web]
+bind_addr = "[::]:3902"
+root_domain = ".web.garage.localhost"
+index = "index.html"
+
+[admin]
+api_bind_addr = "[::]:3903"
+# Dev-only tokens. Real tokens are issued at deploy time (Lot 8).
+admin_token = "dev-admin-token"
+metrics_token = "dev-metrics-token"

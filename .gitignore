@@ -1,0 +1,15 @@
+node_modules/
+dist/
+coverage/
+
+.env
+.env.local
+.env.*.local
+
+*.log
+.DS_Store
+
+# docker-compose volumes (declared at the root for safety even if compose uses named volumes)
+pgdata/
+garage-meta/
+garage-data/
