@@ -54,7 +54,7 @@ Synthèse des choix actés lors du brainstorming. Chaque ligne tranche un point 
 | Validation | `@hono/zod-validator` + Zod | Schémas partagés entre routes et services |
 | Auth | Better Auth + adapter Drizzle | Sessions cookie + Bearer pour mobile |
 | ORM | Drizzle + drizzle-kit | Migrations versionnées |
-| DB | PostgreSQL 16 | PostGIS pas requis en MVP (V2) |
+| DB | PostgreSQL 17 | PostGIS pas requis en MVP (V2) |
 | Stockage objets | Garage (S3) + `@aws-sdk/client-s3` | Buckets `specimens`, `avatars` |
 | HTTP externe | `fetch` Bun natif | PlantNet, Wikipedia |
 | Mailer | `nodemailer` (SMTP) | MailHog en dev, provider externe en prod (Brevo / Postmark) |
@@ -586,7 +586,7 @@ Hors scope MVP. À envisager V2 si une stack OpenTelemetry est disponible.
 ```yaml
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     environment:
       POSTGRES_DB: airbarium
       POSTGRES_USER: airbarium
@@ -647,7 +647,7 @@ bun run dev                    # hot-reload via bun --watch
 
 `.github/workflows/ci.yaml` :
 - Trigger : push + pull_request
-- Services : Postgres 16 + Garage v1.0.1 dans le job
+- Services : Postgres 17 + Garage v1.0.1 dans le job
 - Étapes : `setup-bun`, `install`, `typecheck`, `lint`, `db:migrate`, `test`
 - PlantNet, Wikipedia, SMTP : **mockés** dans les tests
 
