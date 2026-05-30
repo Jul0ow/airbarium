@@ -6,6 +6,7 @@ import { errorHandler } from '@/middleware/error-handler';
 import { httpLogger } from '@/middleware/logger';
 import { requestId } from '@/middleware/request-id';
 import { routes } from '@/routes';
+import { NotFoundError } from '@/utils/errors';
 
 export const createApp = () => {
   const app = new Hono<AppEnv>();
@@ -31,7 +32,9 @@ export const createApp = () => {
 
   app.route('/v1', routes);
 
-  app.notFound((c) => c.json({ error: { code: 'NOT_FOUND', message: 'Route not found' } }, 404));
+  app.notFound(() => {
+    throw new NotFoundError('Route not found');
+  });
   app.onError(errorHandler);
 
   return app;
