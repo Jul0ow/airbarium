@@ -12,7 +12,7 @@ route.get('/health', async (c) => {
     await db.execute(sql`SELECT 1`);
     dbOk = true;
   } catch (err) {
-    c.get('log').warn({ err }, 'health: db probe failed');
+    c.get('log').error({ err }, 'health: db probe failed');
   }
 
   const status = dbOk ? 'ok' : 'degraded';
