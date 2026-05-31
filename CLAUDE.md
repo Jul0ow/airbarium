@@ -49,6 +49,7 @@ Required env vars (copy `.env.example`):
 - Branches: `feat/<description>`, `fix/<description>`, `chore/<description>`
 - Commits: Conventional Commits — `feat:`, `fix:`, `chore:`, `docs:`, `test:`, `refactor:`
 - One branch per PR lot from the roadmap (e.g. `feat/lot-1-bootstrap`, `feat/lot-3-auth`)
+- Never prepend `cd <path> && git …` to target the main repo from a worktree — use `git -C <path> …` instead. The compound `cd && git` form does not match `Bash(git *)` in the permission allowlist and triggers a manual approval prompt every time.
 
 ## Architecture rules
 
