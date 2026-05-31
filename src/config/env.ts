@@ -9,6 +9,7 @@ const PostgresUrl = z
 
 const SmtpUrl = z
   .string()
+  .url()
   .refine((v) => v.startsWith('smtp://') || v.startsWith('smtps://'), {
     message: 'SMTP_URL must start with smtp:// or smtps://',
   });
