@@ -1,5 +1,0 @@
-[test]
-# Run each test file in its own worker process (implies --isolate) so that
-# teardownTestDb() in one suite cannot close the shared postgres pool before
-# another suite has finished querying.
-timeout = 10000

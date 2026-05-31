@@ -1,15 +1,11 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { and, eq } from 'drizzle-orm';
 import { identifications, plantnetUsage, rateLimit, species, specimens, users } from '@/db/schema';
 import { uuid7 } from '@/utils/uuid';
-import { setupTestDb, teardownTestDb, testDb, truncateAll } from '../../helpers/db';
+import { setupTestDb, testDb, truncateAll } from '../../helpers/db';
 
 beforeAll(async () => {
   await setupTestDb();
-});
-
-afterAll(async () => {
-  await teardownTestDb();
 });
 
 beforeEach(async () => {

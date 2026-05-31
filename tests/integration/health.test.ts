@@ -1,13 +1,9 @@
-import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { beforeAll, describe, expect, it } from 'bun:test';
 import { buildTestApp } from '../helpers/app';
-import { setupTestDb, teardownTestDb } from '../helpers/db';
+import { setupTestDb } from '../helpers/db';
 
 beforeAll(async () => {
   await setupTestDb();
-});
-
-afterAll(async () => {
-  await teardownTestDb();
 });
 
 describe('GET /v1/health', () => {
