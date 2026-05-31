@@ -1,13 +1,22 @@
-import { describe, expect, it } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { buildTestApp } from '../helpers/app';
+import { setupTestDb, teardownTestDb } from '../helpers/db';
+
+beforeAll(async () => {
+  await setupTestDb();
+});
+
+afterAll(async () => {
+  await teardownTestDb();
+});
 
 describe('GET /v1/health', () => {
-  it('returns 200 with { status: "ok" } and a generated X-Request-Id', async () => {
+  it('returns 200 with { status: "ok", db: "ok" } and a generated X-Request-Id', async () => {
     const app = buildTestApp();
     const res = await app.request('/v1/health');
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: 'ok' });
+    expect(await res.json()).toEqual({ status: 'ok', db: 'ok' });
 
     const id = res.headers.get('x-request-id');
     expect(id).toMatch(/^[0-9a-f-]{36}$/i);
