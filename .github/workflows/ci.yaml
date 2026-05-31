@@ -8,6 +8,25 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: airbarium_test
+          POSTGRES_USER: airbarium
+          POSTGRES_PASSWORD: dev
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U airbarium -d airbarium_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://airbarium:dev@localhost:5432/airbarium_test
+
     steps:
       - uses: actions/checkout@v5
 
@@ -33,6 +52,9 @@ jobs:
 
       - name: Lint
         run: nix develop --command bun run lint
+
+      - name: Migrate DB
+        run: nix develop --command bun run db:migrate
 
       - name: Test
         run: nix develop --command bun test
