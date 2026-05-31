@@ -1,9 +1,22 @@
+import { sql } from 'drizzle-orm';
 import { Hono } from 'hono';
+import type { AppEnv } from '@/app-env';
+import { db } from '@/db/client';
 
-const route = new Hono();
+const route = new Hono<AppEnv>();
 
-// Lot 1: returns { status: 'ok' } only. The `db` (Lot 2), `garage` (Lot 4) and
-// `plantnet` (Lot 5) probes are added incrementally per spec §10.3.
-route.get('/health', (c) => c.json({ status: 'ok' }));
+// Lot 2: probes Postgres. `garage` (Lot 4) and `plantnet` (Lot 5) probes follow.
+route.get('/health', async (c) => {
+  let dbOk = false;
+  try {
+    await db.execute(sql`SELECT 1`);
+    dbOk = true;
+  } catch (err) {
+    c.get('log').error({ err }, 'health: db probe failed');
+  }
+
+  const status = dbOk ? 'ok' : 'degraded';
+  return c.json({ status, db: dbOk ? 'ok' : 'down' }, dbOk ? 200 : 503);
+});
 
 export default route;
