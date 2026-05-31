@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { __setSendMailForTests, sendMail, type SendMailInput } from '@/lib/mailer';
+import { __setSendMailForTests, type SendMailInput, sendMail } from '@/lib/mailer';
 
 describe('mailer.sendMail', () => {
   let captured: SendMailInput[] = [];
