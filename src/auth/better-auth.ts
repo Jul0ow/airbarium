@@ -23,7 +23,7 @@ export const auth = betterAuth({
     },
   }),
   user: {
-    modelName: 'users',
+    modelName: 'user',
     additionalFields: {
       avatarUrl: { type: 'string', required: false, input: false },
       deletedAt: { type: 'date', required: false, input: false },
@@ -56,6 +56,9 @@ export const auth = betterAuth({
     cookieCache: { enabled: true, maxAge: 5 * 60 },
   },
   advanced: {
+    database: {
+      generateId: () => crypto.randomUUID(),
+    },
     defaultCookieAttributes: {
       sameSite: 'lax',
       secure: env.NODE_ENV === 'production',
