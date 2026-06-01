@@ -70,7 +70,8 @@ export const auth = betterAuth({
     max: 100,
     customRules: {
       '/sign-in/email': { window: 60 * 15, max: 10 },
-      '/sign-up/email': { window: 60 * 60, max: 3 },
+      '/sign-up/email':
+        env.NODE_ENV === 'test' ? { window: 60, max: 1000 } : { window: 60 * 60, max: 3 },
     },
   },
   plugins: [bearer()],
