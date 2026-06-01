@@ -18,7 +18,7 @@
       "!**/pgdata",
       "!**/garage-meta",
       "!**/garage-data",
-      "!src/db/migrations/meta/**"
+      "!src/db/migrations/meta"
     ]
   },
   "formatter": {

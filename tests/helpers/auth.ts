@@ -1,4 +1,4 @@
-import type { Hono } from 'hono';
+import type { Env, Hono } from 'hono';
 
 export type SignUpResult = {
   userId: string;
@@ -13,10 +13,8 @@ type SignUpBody = {
   session?: { token?: string };
 };
 
-// Hono's app.request takes plain Request inputs, so a permissive type is fine here.
-// biome-ignore lint/suspicious/noExplicitAny: test helper accepts any Hono variant
-export async function signUpTestUser(
-  app: Hono<any, any, any>,
+export async function signUpTestUser<E extends Env>(
+  app: Hono<E>,
   input: { email: string; password: string; name: string },
 ): Promise<SignUpResult> {
   const res = await app.request('/v1/auth/sign-up/email', {
