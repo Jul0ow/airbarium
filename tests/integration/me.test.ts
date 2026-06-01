@@ -73,3 +73,84 @@ describe('GET /v1/me', () => {
     mailer.restore();
   });
 });
+
+describe('PATCH /v1/me', () => {
+  it('updates name and returns the new profile', async () => {
+    const app = buildTestApp();
+    const u = await signUpTestUser(app, {
+      email: 'grace@example.com',
+      password: 'correct-horse-battery-staple',
+      name: 'GraceOld',
+    });
+
+    const res = await app.request('/v1/me', {
+      method: 'PATCH',
+      headers: {
+        ...bearerHeaders(u.sessionToken),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ name: '  GraceNew  ' }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as ProfileBody;
+    expect(body.name).toBe('GraceNew');
+
+    const reread = await app.request('/v1/me', { headers: bearerHeaders(u.sessionToken) });
+    const rebody = (await reread.json()) as ProfileBody;
+    expect(rebody.name).toBe('GraceNew');
+
+    mailer.restore();
+  });
+
+  it('rejects an empty name with 400', async () => {
+    const app = buildTestApp();
+    const u = await signUpTestUser(app, {
+      email: 'henry@example.com',
+      password: 'correct-horse-battery-staple',
+      name: 'Henry',
+    });
+
+    const res = await app.request('/v1/me', {
+      method: 'PATCH',
+      headers: {
+        ...bearerHeaders(u.sessionToken),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ name: '   ' }),
+    });
+
+    expect(res.status).toBe(400);
+    mailer.restore();
+  });
+
+  it('ignores unknown fields silently', async () => {
+    const app = buildTestApp();
+    const u = await signUpTestUser(app, {
+      email: 'ivy@example.com',
+      password: 'correct-horse-battery-staple',
+      name: 'Ivy',
+    });
+
+    const res = await app.request('/v1/me', {
+      method: 'PATCH',
+      headers: {
+        ...bearerHeaders(u.sessionToken),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: 'Ivy2',
+        email: 'new@example.com',
+        avatar_url: 'http://x/x.jpg',
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as ProfileBody;
+    expect(body.name).toBe('Ivy2');
+    expect(body.email).toBe('ivy@example.com');
+    expect(body.avatar_url).toBeNull();
+
+    mailer.restore();
+  });
+});
