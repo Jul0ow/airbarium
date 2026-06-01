@@ -20,3 +20,10 @@ export class NotFoundError extends AppError {
     this.name = 'NotFoundError';
   }
 }
+
+export class UnauthorizedError extends AppError {
+  constructor(message = 'Authentication required', details?: ErrorDetails) {
+    super('UNAUTHORIZED', message, 401, details);
+    this.name = 'UnauthorizedError';
+  }
+}
