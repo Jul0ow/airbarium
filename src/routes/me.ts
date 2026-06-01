@@ -7,15 +7,13 @@ import { getMe, updateMe } from '@/services/profile';
 
 const route = new Hono<AppEnv>();
 
-route.use('*', authMiddleware());
-
-route.get('/me', async (c) => {
+route.get('/me', authMiddleware(), async (c) => {
   const user = c.get('user');
   if (!user) throw new Error('unreachable: authMiddleware guards this route');
   return c.json(await getMe(user.id));
 });
 
-route.patch('/me', zValidator('json', PatchMeSchema), async (c) => {
+route.patch('/me', authMiddleware(), zValidator('json', PatchMeSchema), async (c) => {
   const user = c.get('user');
   if (!user) throw new Error('unreachable: authMiddleware guards this route');
   const input = c.req.valid('json');
