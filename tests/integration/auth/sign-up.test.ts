@@ -1,0 +1,89 @@
+import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { eq } from 'drizzle-orm';
+import { account, users } from '@/db/schema';
+import { buildTestApp } from '../../helpers/app';
+import { setupTestDb, testDb, truncateAll } from '../../helpers/db';
+import { installMockMailer, type MockMailerHandle } from '../../helpers/mailer';
+
+let mailer: MockMailerHandle;
+
+beforeAll(async () => {
+  await setupTestDb();
+});
+
+beforeEach(async () => {
+  await truncateAll();
+  mailer = installMockMailer();
+});
+
+describe('POST /v1/auth/sign-up/email', () => {
+  it('creates a user + credential account and sends a verification email', async () => {
+    const app = buildTestApp();
+    const res = await app.request('/v1/auth/sign-up/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'alice@example.com',
+        password: 'correct-horse-battery-staple',
+        name: 'Alice',
+      }),
+    });
+
+    expect(res.status).toBeLessThan(300);
+    const body = (await res.json()) as { user: { email: string; name: string } };
+    expect(body.user.email).toBe('alice@example.com');
+    expect(body.user.name).toBe('Alice');
+
+    const [userRow] = await testDb.select().from(users).where(eq(users.email, 'alice@example.com'));
+    expect(userRow).toBeDefined();
+    expect(userRow?.emailVerified).toBe(false);
+
+    const [acctRow] = await testDb
+      .select()
+      .from(account)
+      .where(eq(account.userId, userRow?.id ?? ''));
+    expect(acctRow?.providerId).toBe('credential');
+    expect(acctRow?.password).toBeTruthy();
+
+    expect(mailer.sent).toHaveLength(1);
+    expect(mailer.sent[0]?.to).toBe('alice@example.com');
+    expect(mailer.sent[0]?.html).toContain(`${process.env.BETTER_AUTH_URL}`.replace(/\/$/, ''));
+    expect(mailer.sent[0]?.html).toMatch(/verify-email/);
+
+    mailer.restore();
+  });
+
+  it('rejects a duplicate email', async () => {
+    const app = buildTestApp();
+    const payload = {
+      email: 'dup@example.com',
+      password: 'correct-horse-battery-staple',
+      name: 'A',
+    };
+    await app.request('/v1/auth/sign-up/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    const res = await app.request('/v1/auth/sign-up/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    mailer.restore();
+  });
+
+  it('rejects a short password (BA default policy)', async () => {
+    const app = buildTestApp();
+    const res = await app.request('/v1/auth/sign-up/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'short@example.com', password: 'short', name: 'X' }),
+    });
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    mailer.restore();
+  });
+});
