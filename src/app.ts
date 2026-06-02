@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import type { AppEnv } from '@/app-env';
+import { auth } from '@/auth/better-auth';
 import { errorHandler } from '@/middleware/error-handler';
 import { httpLogger } from '@/middleware/logger';
 import { requestId } from '@/middleware/request-id';
@@ -29,6 +30,8 @@ export const createApp = () => {
       allowMethods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'],
     }),
   );
+
+  app.on(['GET', 'POST'], '/v1/auth/*', (c) => auth.handler(c.req.raw));
 
   app.route('/v1', routes);
 

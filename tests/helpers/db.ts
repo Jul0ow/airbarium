@@ -12,9 +12,11 @@ export async function setupTestDb() {
 }
 
 export async function truncateAll() {
-  // Order matters less because of CASCADE, but listing FK children first avoids noise.
   await db.execute(sql`
     TRUNCATE TABLE
+      verification,
+      session,
+      account,
       rate_limit,
       plantnet_usage,
       specimens,

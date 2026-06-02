@@ -226,8 +226,8 @@ POST   /v1/auth/sign-out
 GET    /v1/auth/session                -> { user, session } | 401
 POST   /v1/auth/send-verification-email
 GET    /v1/auth/verify-email?token=…
-POST   /v1/auth/forget-password        { email }
-POST   /v1/auth/reset-password         { token, new_password }
+POST   /v1/auth/request-password-reset { email, redirectTo? }
+POST   /v1/auth/reset-password         { token, newPassword }
 ```
 
 ### 6.3 Profil

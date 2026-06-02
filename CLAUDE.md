@@ -62,6 +62,9 @@ Required env vars (copy `.env.example`):
 - **Identification is immutable**: once a specimen has an identification, it cannot be changed. `POST /specimens/:id/identify` is only valid when `identification_source = 'none'`.
 - **Presigned S3 URLs** (1h): always generate fresh presigned URLs when returning `photo_url` in responses. Never return raw Garage URLs.
 - **Rate limiting backed by Postgres** — no Redis in MVP. Uses a `rate_limit` table.
+- **Better Auth routes (`/v1/auth/*`) return Better Auth's native error shape** (`{ message, code }`), not our `{ error: { code, message } }` envelope. This is intentional — the BA client SDK depends on it.
+- **Password reset request endpoint is `/v1/auth/request-password-reset`** (BA's actual route). Older docs may say `/forget-password` — that path is not exposed by our BA version.
+- **Trusted origins and CORS origins must stay in sync** — both lists live in `src/auth/better-auth.ts` (`trustedOrigins`) and `src/app.ts` (`cors.origin`). Add new client origins to both.
 
 ## 8-lot roadmap
 

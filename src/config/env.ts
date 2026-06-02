@@ -7,11 +7,23 @@ const PostgresUrl = z
     message: 'DATABASE_URL must start with postgres:// or postgresql://',
   });
 
+const SmtpUrl = z
+  .string()
+  .url()
+  .refine((v) => v.startsWith('smtp://') || v.startsWith('smtps://'), {
+    message: 'SMTP_URL must start with smtp:// or smtps://',
+  });
+
 const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(3000),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
   DATABASE_URL: PostgresUrl,
+  BETTER_AUTH_SECRET: z.string().min(32, 'BETTER_AUTH_SECRET must be >=32 chars'),
+  BETTER_AUTH_URL: z.string().url(),
+  SMTP_URL: SmtpUrl,
+  MAIL_FROM: z.string().min(1),
+  APP_URL: z.string().url(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

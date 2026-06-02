@@ -25,7 +25,13 @@ jobs:
           --health-retries 10
 
     env:
+      NODE_ENV: test
       DATABASE_URL: postgres://airbarium:dev@localhost:5432/airbarium_test
+      BETTER_AUTH_SECRET: ci-secret-32-chars-min-aaaaaaaaaaaaaaaaa
+      BETTER_AUTH_URL: http://localhost:3000
+      SMTP_URL: smtp://localhost:1025
+      MAIL_FROM: "Airbarium CI <noreply@airbarium.app>"
+      APP_URL: http://localhost:8081
 
     steps:
       - uses: actions/checkout@v5
