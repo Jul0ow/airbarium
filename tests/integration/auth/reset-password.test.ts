@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { env } from '@/config/env';
 import { buildTestApp } from '../../helpers/app';
+import { signUpTestUser } from '../../helpers/auth';
 import { setupTestDb, truncateAll } from '../../helpers/db';
 import { installMockMailer, type MockMailerHandle } from '../../helpers/mailer';
 
@@ -29,14 +30,10 @@ describe('forget + reset password round-trip', () => {
   it('lets the user log in with the new password and rejects the old one', async () => {
     const app = buildTestApp();
 
-    await app.request('/v1/auth/sign-up/email', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email: 'dave@example.com',
-        password: 'old-password-1234',
-        name: 'Dave',
-      }),
+    await signUpTestUser(app, {
+      email: 'dave@example.com',
+      password: 'old-password-1234',
+      name: 'Dave',
     });
     mailer.sent.length = 0;
 

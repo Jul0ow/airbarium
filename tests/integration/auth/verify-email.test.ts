@@ -2,6 +2,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test
 import { eq } from 'drizzle-orm';
 import { users } from '@/db/schema';
 import { buildTestApp } from '../../helpers/app';
+import { signUpTestUser } from '../../helpers/auth';
 import { setupTestDb, testDb, truncateAll } from '../../helpers/db';
 import { installMockMailer, type MockMailerHandle } from '../../helpers/mailer';
 
@@ -30,14 +31,10 @@ describe('GET /v1/auth/verify-email', () => {
   it('flips users.email_verified when the token is valid', async () => {
     const app = buildTestApp();
 
-    await app.request('/v1/auth/sign-up/email', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email: 'carol@example.com',
-        password: 'correct-horse-battery-staple',
-        name: 'Carol',
-      }),
+    await signUpTestUser(app, {
+      email: 'carol@example.com',
+      password: 'correct-horse-battery-staple',
+      name: 'Carol',
     });
 
     expect(mailer.sent).toHaveLength(1);
