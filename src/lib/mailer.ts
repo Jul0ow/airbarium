@@ -1,5 +1,6 @@
 import nodemailer, { type Transporter } from 'nodemailer';
 import { env } from '@/config/env';
+import { logger } from '@/middleware/logger';
 
 export type SendMailInput = {
   to: string;
@@ -28,25 +29,9 @@ const defaultImpl: SendMailImpl = async (input) => {
       html: input.html,
       text: input.text,
     });
-    console.log(
-      JSON.stringify({
-        level: 'info',
-        msg: 'mail.sent',
-        to: input.to,
-        subject: input.subject,
-        messageId: result.messageId,
-      }),
-    );
+    logger.info({ to: input.to, subject: input.subject, messageId: result.messageId }, 'mail.sent');
   } catch (err) {
-    console.error(
-      JSON.stringify({
-        level: 'error',
-        msg: 'mail.failed',
-        to: input.to,
-        subject: input.subject,
-        err: String(err),
-      }),
-    );
+    logger.error({ err, to: input.to, subject: input.subject }, 'mail.failed');
   }
 };
 

@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { index, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { users } from './users';
 
 export const account = pgTable(
@@ -20,7 +20,10 @@ export const account = pgTable(
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex('account_provider_account_idx').on(t.providerId, t.accountId)],
+  (t) => [
+    uniqueIndex('account_provider_account_idx').on(t.providerId, t.accountId),
+    index('account_user_id_idx').on(t.userId),
+  ],
 );
 
 export type Account = typeof account.$inferSelect;

@@ -1,4 +1,5 @@
-import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { env } from '@/config/env';
 import { buildTestApp } from '../../helpers/app';
 import { setupTestDb, truncateAll } from '../../helpers/db';
 import { installMockMailer, type MockMailerHandle } from '../../helpers/mailer';
@@ -12,6 +13,10 @@ beforeAll(async () => {
 beforeEach(async () => {
   await truncateAll();
   mailer = installMockMailer();
+});
+
+afterEach(() => {
+  mailer.restore();
 });
 
 function extractTokenFromHtml(html: string): string {
@@ -40,7 +45,7 @@ describe('forget + reset password round-trip', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         email: 'dave@example.com',
-        redirectTo: `${process.env.APP_URL}/reset-password`,
+        redirectTo: `${env.APP_URL}/reset-password`,
       }),
     });
     expect(forgetRes.status).toBeLessThan(300);
@@ -70,7 +75,5 @@ describe('forget + reset password round-trip', () => {
       body: JSON.stringify({ email: 'dave@example.com', password: 'new-password-5678' }),
     });
     expect(fresh.status).toBe(200);
-
-    mailer.restore();
   });
 });

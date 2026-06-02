@@ -92,7 +92,7 @@ Index : `(identifier)`.
 ### 4.2 Mapping Better Auth ↔ `users`
 
 La table `users` du Lot 2 n'est **pas** modifiée. Better Auth est configuré pour :
-- Utiliser la table nommée `users` (par défaut il attend `user`) via `user.modelName = 'users'`
+- Utiliser la table nommée `users` via la map du drizzleAdapter (`schema: { user: users, ... }`) et `user.modelName = 'user'`. Le `modelName` doit matcher la clé logique BA (`'user'`), pas le nom physique Postgres.
 - **Ne pas** déclarer de champ `image` (Better Auth ne gère pas l'avatar — Lot 4 écrit `avatarUrl` directement via Drizzle)
 - Enregistrer `avatarUrl` et `deletedAt` comme `additionalFields` (typés en lecture, jamais en écriture)
 
@@ -124,7 +124,7 @@ POST   /v1/auth/sign-out                                            → 200 {}
 GET    /v1/auth/session                                              → 200 { user, session } | 401
 POST   /v1/auth/send-verification-email  { email }                  → 200 {}
 GET    /v1/auth/verify-email?token=…                                → 302 / 200
-POST   /v1/auth/forget-password          { email }                  → 200 {}
+POST   /v1/auth/request-password-reset   { email, redirectTo? }    → 200 {}
 POST   /v1/auth/reset-password           { token, newPassword }     → 200 {}
 ```
 
@@ -327,7 +327,7 @@ mobile  Stocke session.token côté Keychain/SecureStore
 ### 8.3 Forget password / reset
 
 ```
-POST /v1/auth/forget-password { email }
+POST /v1/auth/request-password-reset { email, redirectTo? }
   → BA crée une row verification (TTL 1h)
   → callback sendResetPassword({ user, url, token }) → mailer
   → mailer envoie un email pointant vers `${APP_URL}/reset-password?token=…`

@@ -8,10 +8,13 @@ Full design: [`docs/superpowers/specs/2026-05-26-airbarium-backend-mvp-design.md
 
 ```bash
 cp .env.example .env
-docker compose up -d        # postgres + garage + mailhog
+# Required before db:migrate — drizzle.config.ts imports the validated env, which
+# requires a BETTER_AUTH_SECRET (32+ chars). Generate one and add it to .env:
+bun run auth:secret                # paste output into .env as BETTER_AUTH_SECRET=
+docker compose up -d               # postgres + garage + mailhog
 bun install
-bun run db:migrate          # apply schema to local postgres
-bun run dev                 # API on :3000, hot reload
+bun run db:migrate                 # apply schema to local postgres
+bun run dev                        # API on :3000, hot reload
 ```
 
 Health check: `curl http://localhost:3000/v1/health` returns `{ "status": "ok", "db": "ok" }` when Postgres is reachable.

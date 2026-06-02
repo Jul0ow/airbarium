@@ -15,11 +15,11 @@ beforeEach(async () => {
 describe('profile service', () => {
   it('getMe returns the profile shape', async () => {
     const id = uuid7();
-    await testDb.insert(users).values({ id, email: 'g@x', name: 'G' });
+    await testDb.insert(users).values({ id, email: 'g@x.test', name: 'G' });
     const out = await getMe(id);
     expect(out).toEqual({
       id,
-      email: 'g@x',
+      email: 'g@x.test',
       email_verified: false,
       name: 'G',
       avatar_url: null,
@@ -29,7 +29,7 @@ describe('profile service', () => {
 
   it('updateMe applies name and preserves created_at', async () => {
     const id = uuid7();
-    await testDb.insert(users).values({ id, email: 'h@x', name: 'OldName' });
+    await testDb.insert(users).values({ id, email: 'h@x.test', name: 'OldName' });
     const before = (await getMe(id)).created_at;
 
     await new Promise((r) => setTimeout(r, 10));

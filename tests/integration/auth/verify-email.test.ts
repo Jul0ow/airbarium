@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { eq } from 'drizzle-orm';
 import { users } from '@/db/schema';
 import { buildTestApp } from '../../helpers/app';
@@ -14,6 +14,10 @@ beforeAll(async () => {
 beforeEach(async () => {
   await truncateAll();
   mailer = installMockMailer();
+});
+
+afterEach(() => {
+  mailer.restore();
 });
 
 function extractTokenFromHtml(html: string): string {
@@ -49,8 +53,6 @@ describe('GET /v1/auth/verify-email', () => {
 
     const [u] = await testDb.select().from(users).where(eq(users.email, 'carol@example.com'));
     expect(u?.emailVerified).toBe(true);
-
-    mailer.restore();
   });
 
   it('rejects an obviously bad token', async () => {
@@ -59,6 +61,5 @@ describe('GET /v1/auth/verify-email', () => {
       method: 'GET',
     });
     expect(res.status).toBeGreaterThanOrEqual(400);
-    mailer.restore();
   });
 });

@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { buildTestApp } from '../../helpers/app';
 import { setupTestDb, truncateAll } from '../../helpers/db';
 import { installMockMailer, type MockMailerHandle } from '../../helpers/mailer';
@@ -12,6 +12,10 @@ beforeAll(async () => {
 beforeEach(async () => {
   await truncateAll();
   mailer = installMockMailer();
+});
+
+afterEach(() => {
+  mailer.restore();
 });
 
 async function signUp(app: ReturnType<typeof buildTestApp>) {
@@ -50,8 +54,6 @@ describe('POST /v1/auth/sign-in/email', () => {
     };
     const bearer = res.headers.get('set-auth-token') ?? body.token ?? body.session?.token;
     expect(bearer).toBeTruthy();
-
-    mailer.restore();
   });
 
   it('returns 401 on wrong password', async () => {
@@ -65,7 +67,6 @@ describe('POST /v1/auth/sign-in/email', () => {
     });
 
     expect(res.status).toBe(401);
-    mailer.restore();
   });
 
   it('rate-limits after 10 failures in the window', async () => {
@@ -82,7 +83,5 @@ describe('POST /v1/auth/sign-in/email', () => {
       lastStatus = res.status;
     }
     expect(lastStatus).toBe(429);
-
-    mailer.restore();
   });
 });

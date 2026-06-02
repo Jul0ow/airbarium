@@ -1,3 +1,4 @@
+import { escapeAttr, escapeHtml } from './_escape';
 import type { EmailContent } from './verify-email';
 
 export function resetPasswordEmail(input: { url: string; userName: string }): EmailContent {
@@ -20,19 +21,4 @@ ${url}
 Ce lien expire dans 1 heure. Si tu n'es pas à l'origine de cette demande, ignore ce message.
 — L'équipe Airbarium`,
   };
-}
-
-function escapeHtml(s: string): string {
-  const map: Record<string, string> = {
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;',
-  };
-  return s.replace(/[&<>"']/g, (c) => map[c] ?? c);
-}
-
-function escapeAttr(s: string): string {
-  return escapeHtml(s);
 }

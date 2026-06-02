@@ -1,5 +1,6 @@
-import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { eq } from 'drizzle-orm';
+import { env } from '@/config/env';
 import { account, users } from '@/db/schema';
 import { buildTestApp } from '../../helpers/app';
 import { setupTestDb, testDb, truncateAll } from '../../helpers/db';
@@ -14,6 +15,10 @@ beforeAll(async () => {
 beforeEach(async () => {
   await truncateAll();
   mailer = installMockMailer();
+});
+
+afterEach(() => {
+  mailer.restore();
 });
 
 describe('POST /v1/auth/sign-up/email', () => {
@@ -47,10 +52,8 @@ describe('POST /v1/auth/sign-up/email', () => {
 
     expect(mailer.sent).toHaveLength(1);
     expect(mailer.sent[0]?.to).toBe('alice@example.com');
-    expect(mailer.sent[0]?.html).toContain(`${process.env.BETTER_AUTH_URL}`.replace(/\/$/, ''));
+    expect(mailer.sent[0]?.html).toContain(env.BETTER_AUTH_URL.replace(/\/$/, ''));
     expect(mailer.sent[0]?.html).toMatch(/verify-email/);
-
-    mailer.restore();
   });
 
   it('rejects a duplicate email', async () => {
@@ -73,7 +76,6 @@ describe('POST /v1/auth/sign-up/email', () => {
     });
 
     expect(res.status).toBeGreaterThanOrEqual(400);
-    mailer.restore();
   });
 
   it('rejects a short password (BA default policy)', async () => {
@@ -84,6 +86,5 @@ describe('POST /v1/auth/sign-up/email', () => {
       body: JSON.stringify({ email: 'short@example.com', password: 'short', name: 'X' }),
     });
     expect(res.status).toBeGreaterThanOrEqual(400);
-    mailer.restore();
   });
 });

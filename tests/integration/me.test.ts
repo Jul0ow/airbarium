@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { buildTestApp } from '../helpers/app';
 import { bearerHeaders, signUpTestUser } from '../helpers/auth';
 import { setupTestDb, truncateAll } from '../helpers/db';
@@ -13,6 +13,10 @@ beforeAll(async () => {
 beforeEach(async () => {
   await truncateAll();
   mailer = installMockMailer();
+});
+
+afterEach(() => {
+  mailer.restore();
 });
 
 type ProfileBody = {
@@ -33,7 +37,6 @@ describe('GET /v1/me', () => {
     expect(res.status).toBe(401);
     const body = (await res.json()) as ErrorBody;
     expect(body.error.code).toBe('UNAUTHORIZED');
-    mailer.restore();
   });
 
   it('returns the profile when authenticated via Bearer', async () => {
@@ -55,7 +58,6 @@ describe('GET /v1/me', () => {
       avatar_url: null,
       created_at: expect.any(String),
     });
-    mailer.restore();
   });
 
   it('returns the profile when authenticated via cookie', async () => {
@@ -70,7 +72,6 @@ describe('GET /v1/me', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as ProfileBody;
     expect(body.email).toBe('frank@example.com');
-    mailer.restore();
   });
 });
 
@@ -99,8 +100,6 @@ describe('PATCH /v1/me', () => {
     const reread = await app.request('/v1/me', { headers: bearerHeaders(u.sessionToken) });
     const rebody = (await reread.json()) as ProfileBody;
     expect(rebody.name).toBe('GraceNew');
-
-    mailer.restore();
   });
 
   it('rejects an empty name with 400', async () => {
@@ -121,7 +120,6 @@ describe('PATCH /v1/me', () => {
     });
 
     expect(res.status).toBe(400);
-    mailer.restore();
   });
 
   it('ignores unknown fields silently', async () => {
@@ -150,7 +148,5 @@ describe('PATCH /v1/me', () => {
     expect(body.name).toBe('Ivy2');
     expect(body.email).toBe('ivy@example.com');
     expect(body.avatar_url).toBeNull();
-
-    mailer.restore();
   });
 });

@@ -7,6 +7,7 @@ import { account, session, users, verification } from '@/db/schema';
 import { resetPasswordEmail } from '@/lib/emails/reset-password';
 import { verifyEmailEmail } from '@/lib/emails/verify-email';
 import { sendMail } from '@/lib/mailer';
+import { uuid7 } from '@/utils/uuid';
 
 export const auth = betterAuth({
   secret: env.BETTER_AUTH_SECRET,
@@ -32,6 +33,9 @@ export const auth = betterAuth({
   emailAndPassword: {
     enabled: true,
     autoSignIn: true,
+    // Spec §2: verification email is sent, but sign-in is not gated on it.
+    // Explicit so an upstream default change can't silently flip behavior.
+    requireEmailVerification: false,
     password: {
       hash: async (pw) => Bun.password.hash(pw, { algorithm: 'argon2id' }),
       verify: async ({ hash, password }) => Bun.password.verify(password, hash),
@@ -57,7 +61,7 @@ export const auth = betterAuth({
   },
   advanced: {
     database: {
-      generateId: () => crypto.randomUUID(),
+      generateId: () => uuid7(),
     },
     defaultCookieAttributes: {
       sameSite: 'lax',

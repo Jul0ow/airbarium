@@ -1,3 +1,5 @@
+import { escapeAttr, escapeHtml } from './_escape';
+
 export type EmailContent = { subject: string; html: string; text: string };
 
 export function verifyEmailEmail(input: { url: string; userName: string }): EmailContent {
@@ -20,19 +22,4 @@ ${url}
 Si tu n'es pas à l'origine de cette inscription, ignore ce message.
 — L'équipe Airbarium`,
   };
-}
-
-function escapeHtml(s: string): string {
-  const map: Record<string, string> = {
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;',
-  };
-  return s.replace(/[&<>"']/g, (c) => map[c] ?? c);
-}
-
-function escapeAttr(s: string): string {
-  return escapeHtml(s);
 }
