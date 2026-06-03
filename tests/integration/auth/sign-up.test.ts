@@ -87,4 +87,17 @@ describe('POST /v1/auth/sign-up/email', () => {
     });
     expect(res.status).toBeGreaterThanOrEqual(400);
   });
+
+  it('returns 400 with BA error shape for malformed JSON', async () => {
+    const app = buildTestApp();
+    const res = await app.request('/v1/auth/sign-up/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{"email: "x", "password": "y", "name": "z"}',
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { message: string; code: string };
+    expect(body.code).toBe('INVALID_JSON');
+    expect(body.message).toBeTruthy();
+  });
 });
