@@ -1,7 +1,7 @@
-import { zValidator } from '@hono/zod-validator';
 import { Hono } from 'hono';
 import type { AppEnv } from '@/app-env';
 import { authMiddleware } from '@/middleware/auth';
+import { jsonBody } from '@/middleware/json-body';
 import { PatchMeSchema } from '@/schemas/me';
 import { getMe, updateMe } from '@/services/profile';
 
@@ -13,7 +13,7 @@ route.get('/me', authMiddleware(), async (c) => {
   return c.json(await getMe(user.id));
 });
 
-route.patch('/me', authMiddleware(), zValidator('json', PatchMeSchema), async (c) => {
+route.patch('/me', authMiddleware(), ...jsonBody(PatchMeSchema), async (c) => {
   const user = c.get('user');
   if (!user) throw new Error('unreachable: authMiddleware guards this route');
   const input = c.req.valid('json');
