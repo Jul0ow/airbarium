@@ -3,6 +3,7 @@ import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import type { AppEnv } from '@/app-env';
 import { auth } from '@/auth/better-auth';
+import { authJsonGuard } from '@/middleware/auth-json-guard';
 import { errorHandler } from '@/middleware/error-handler';
 import { httpLogger } from '@/middleware/logger';
 import { requestId } from '@/middleware/request-id';
@@ -31,6 +32,7 @@ export const createApp = () => {
     }),
   );
 
+  app.use('/v1/auth/*', authJsonGuard());
   app.on(['GET', 'POST'], '/v1/auth/*', (c) => auth.handler(c.req.raw));
 
   app.route('/v1', routes);
