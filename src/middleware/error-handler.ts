@@ -20,6 +20,8 @@ const httpStatusCode = (status: StatusCode): string => {
       return 'CONFLICT';
     case 413:
       return 'PAYLOAD_TOO_LARGE';
+    case 415:
+      return 'UNSUPPORTED_MEDIA_TYPE';
     case 422:
       return 'UNPROCESSABLE_ENTITY';
     case 429:

@@ -28,7 +28,9 @@ type ProfileBody = {
   created_at: string;
 };
 
-type ErrorBody = { error: { code: string; message: string } };
+type ErrorBody = {
+  error: { code: string; message: string; details?: Record<string, unknown> };
+};
 
 describe('GET /v1/me', () => {
   it('returns 401 without authentication', async () => {
@@ -102,7 +104,7 @@ describe('PATCH /v1/me', () => {
     expect(rebody.name).toBe('GraceNew');
   });
 
-  it('rejects an empty name with 400', async () => {
+  it('rejects an empty name with 400 in our error envelope', async () => {
     const app = buildTestApp();
     const u = await signUpTestUser(app, {
       email: 'henry@example.com',
@@ -120,6 +122,51 @@ describe('PATCH /v1/me', () => {
     });
 
     expect(res.status).toBe(400);
+    const body = (await res.json()) as ErrorBody;
+    expect(body.error.code).toBe('VALIDATION');
+    expect(body.error.message).toBeTruthy();
+    expect(body.error.details).toBeDefined();
+  });
+
+  it('rejects a non-JSON content-type with 415', async () => {
+    const app = buildTestApp();
+    const u = await signUpTestUser(app, {
+      email: 'kate@example.com',
+      password: 'correct-horse-battery-staple',
+      name: 'Kate',
+    });
+
+    const res = await app.request('/v1/me', {
+      method: 'PATCH',
+      headers: {
+        ...bearerHeaders(u.sessionToken),
+        'Content-Type': 'text/plain',
+      },
+      body: 'name=Kate2',
+    });
+
+    expect(res.status).toBe(415);
+    const body = (await res.json()) as ErrorBody;
+    expect(body.error.code).toBe('UNSUPPORTED_MEDIA_TYPE');
+  });
+
+  it('rejects a missing content-type with 415', async () => {
+    const app = buildTestApp();
+    const u = await signUpTestUser(app, {
+      email: 'leo@example.com',
+      password: 'correct-horse-battery-staple',
+      name: 'Leo',
+    });
+
+    const res = await app.request('/v1/me', {
+      method: 'PATCH',
+      headers: bearerHeaders(u.sessionToken),
+      body: JSON.stringify({ name: 'Leo2' }),
+    });
+
+    expect(res.status).toBe(415);
+    const body = (await res.json()) as ErrorBody;
+    expect(body.error.code).toBe('UNSUPPORTED_MEDIA_TYPE');
   });
 
   it('ignores unknown fields silently', async () => {

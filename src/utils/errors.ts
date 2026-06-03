@@ -27,3 +27,17 @@ export class UnauthorizedError extends AppError {
     this.name = 'UnauthorizedError';
   }
 }
+
+export class UnsupportedMediaTypeError extends AppError {
+  constructor(message = 'Unsupported media type', details?: ErrorDetails) {
+    super('UNSUPPORTED_MEDIA_TYPE', message, 415, details);
+    this.name = 'UnsupportedMediaTypeError';
+  }
+}
+
+export class ValidationError extends AppError {
+  constructor(message = 'Invalid request body', details?: ErrorDetails) {
+    super('VALIDATION', message, 400, details);
+    this.name = 'ValidationError';
+  }
+}
