@@ -69,8 +69,7 @@ jobs:
       - name: Wait for garage-init to complete
         run: |
           for i in $(seq 1 30); do
-            STATUS=$(docker compose ps -a --format json garage-init | grep -oE '"State":"[a-z]+"' | head -1)
-            if echo "$STATUS" | grep -q '"State":"exited"'; then
+            if docker compose ps -a --services --filter "status=exited" | grep -q '^garage-init$'; then
               echo "garage-init exited"
               docker compose logs garage-init
               exit 0

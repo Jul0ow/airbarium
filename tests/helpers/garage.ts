@@ -11,6 +11,9 @@ export async function setupTestGarage(): Promise<void> {
   setupDone = true;
 }
 
+// Errors are swallowed: avatar keys are deterministic per user-id (UUIDv7),
+// so a leaked object cannot collide with a future test. Failing here would
+// mask the real test result.
 export async function cleanupGarageObjects(keys: string[]): Promise<void> {
   await Promise.all(
     keys.map(async (key) => {

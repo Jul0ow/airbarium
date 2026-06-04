@@ -1,41 +1,36 @@
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { AppEnv } from '@/app-env';
-import { authMiddleware } from '@/middleware/auth';
+import { authMiddleware, requireUser } from '@/middleware/auth';
 import { jsonBody } from '@/middleware/json-body';
 import { PatchMeSchema } from '@/schemas/me';
 import { deleteAvatar, uploadAvatar } from '@/services/photo-storage';
 import { getMe, updateMe } from '@/services/profile';
 import { AppError } from '@/utils/errors';
-import { validateJpeg } from '@/utils/jpeg';
+import { JPEG_BODY_LIMIT_BYTES, validateJpeg } from '@/utils/jpeg';
 
 const route = new Hono<AppEnv>();
 
 route.get('/me', authMiddleware(), async (c) => {
-  const user = c.get('user');
-  if (!user) throw new Error('unreachable: authMiddleware guards this route');
-  return c.json(await getMe(user.id));
+  return c.json(await getMe(requireUser(c).id));
 });
 
 route.patch('/me', authMiddleware(), ...jsonBody(PatchMeSchema), async (c) => {
-  const user = c.get('user');
-  if (!user) throw new Error('unreachable: authMiddleware guards this route');
   const input = c.req.valid('json');
-  return c.json(await updateMe(user.id, input));
+  return c.json(await updateMe(requireUser(c).id, input));
 });
 
 route.put(
   '/me/avatar',
   authMiddleware(),
   bodyLimit({
-    maxSize: 3 * 1024 * 1024,
+    maxSize: JPEG_BODY_LIMIT_BYTES,
     onError: () => {
-      throw new AppError('PAYLOAD_TOO_LARGE', 'File exceeds 3MB body limit', 413);
+      throw new AppError('PAYLOAD_TOO_LARGE', 'File exceeds upload body limit', 413);
     },
   }),
   async (c) => {
-    const user = c.get('user');
-    if (!user) throw new Error('unreachable: authMiddleware guards this route');
+    const user = requireUser(c);
 
     const ct = c.req.header('content-type') ?? '';
     if (!ct.toLowerCase().startsWith('multipart/form-data')) {
@@ -62,9 +57,7 @@ route.put(
 );
 
 route.delete('/me/avatar', authMiddleware(), async (c) => {
-  const user = c.get('user');
-  if (!user) throw new Error('unreachable: authMiddleware guards this route');
-  await deleteAvatar(user.id);
+  await deleteAvatar(requireUser(c).id);
   return c.body(null, 204);
 });
 

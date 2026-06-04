@@ -43,6 +43,9 @@ services:
         set -e
         ADMIN=http://garage:3903
         TOKEN=dev-admin-token
+        # NOTE: GetClusterStatus JSON parsed with grep+sed to avoid an apk add jq.
+        # Pinned to Garage v2.3.0 — if the response shape changes (extra "id" field
+        # before nodes[0].id), this extraction breaks. Bump the image tag in lockstep.
         NODE_ID=$$(wget -qO- "$$ADMIN/v2/GetClusterStatus" --header "Authorization: Bearer $$TOKEN" \
           | grep '"id"' | head -1 | sed 's/.*"id": "\([^"]*\)".*/\1/')
         echo "Node ID: $$NODE_ID"
