@@ -25,6 +25,49 @@ services:
       - garage-meta:/var/lib/garage/meta
       - garage-data:/var/lib/garage/data
       - ./compose/garage.toml:/etc/garage.toml:ro
+    healthcheck:
+      test: ['CMD', '/garage', 'node', 'id']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  garage-init:
+    image: alpine:3.20
+    depends_on:
+      garage:
+        condition: service_healthy
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        set -e
+        ADMIN=http://garage:3903
+        TOKEN=dev-admin-token
+        NODE_ID=$$(wget -qO- "$$ADMIN/v2/GetClusterStatus" --header "Authorization: Bearer $$TOKEN" \
+          | grep '"id"' | head -1 | sed 's/.*"id": "\([^"]*\)".*/\1/')
+        echo "Node ID: $$NODE_ID"
+        wget -qO- "$$ADMIN/v2/UpdateClusterLayout" \
+          --header "Authorization: Bearer $$TOKEN" \
+          --header "Content-Type: application/json" \
+          --post-data "{\"roles\":[{\"id\":\"$$NODE_ID\",\"zone\":\"dev\",\"capacity\":1073741824,\"tags\":[]}]}" \
+          > /dev/null || true
+        wget -qO- "$$ADMIN/v2/ApplyClusterLayout" \
+          --header "Authorization: Bearer $$TOKEN" \
+          --header "Content-Type: application/json" \
+          --post-data '{"version":1}' \
+          > /dev/null || true
+        wget -qO- "$$ADMIN/v2/ImportKey" \
+          --header "Authorization: Bearer $$TOKEN" \
+          --header "Content-Type: application/json" \
+          --post-data '{"accessKeyId":"GKDEV0000000000000000000000000000000000000","secretAccessKey":"SKDEV0000000000000000000000000000000000000000000000000000000000","name":"airbarium-dev"}' \
+          > /dev/null || true
+        wget -qO- "$$ADMIN/v2/UpdateKey?id=GKDEV0000000000000000000000000000000000000" \
+          --header "Authorization: Bearer $$TOKEN" \
+          --header "Content-Type: application/json" \
+          --post-data '{"allow":{"createBucket":true}}' \
+          > /dev/null || true
+        echo "garage-init done"
+    restart: 'no'
 
   mailhog:
     image: mailhog/mailhog
