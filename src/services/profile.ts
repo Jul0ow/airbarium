@@ -18,7 +18,7 @@ async function toResponse(u: User): Promise<ProfileResponse> {
     email: u.email,
     email_verified: u.emailVerified,
     name: u.name,
-    avatar_url: u.avatarUrl ? await presignAvatar(u.avatarUrl) : null,
+    avatar_url: u.avatarUrl ? await presignAvatar(u.id) : null,
     created_at: u.createdAt.toISOString(),
   };
 }

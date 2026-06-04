@@ -45,6 +45,10 @@ export async function deleteAvatar(userId: string): Promise<void> {
   }
 }
 
-export async function presignAvatar(key: string): Promise<string> {
-  return getPresignedUrl({ bucket: AVATARS_BUCKET, key, expiresInSeconds: PRESIGN_TTL });
+export async function presignAvatar(userId: string): Promise<string> {
+  return getPresignedUrl({
+    bucket: AVATARS_BUCKET,
+    key: avatarKey(userId),
+    expiresInSeconds: PRESIGN_TTL,
+  });
 }

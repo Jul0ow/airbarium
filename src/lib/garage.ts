@@ -61,7 +61,9 @@ const defaultImpl: Impl = {
     } catch (err) {
       const status = (err as { $metadata?: { httpStatusCode?: number } })?.$metadata
         ?.httpStatusCode;
-      if (status !== 404) {
+      const name = (err as { name?: string })?.name;
+      const isMissing = status === 404 || name === 'NotFound' || name === 'NoSuchBucket';
+      if (!isMissing) {
         logger.warn({ err, bucket }, 'garage.ensureBucket: head failed');
         throw err;
       }
