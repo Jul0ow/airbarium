@@ -37,7 +37,7 @@ Health check: `curl http://localhost:3000/v1/health` returns `{ "status": "ok", 
 
 ## Status
 
-Lots 1 (Bootstrap), 2 (DB & migrations), and 3 (Auth) — Hono skeleton, `/v1/health` with DB probe, Drizzle schemas for users/species/identifications/specimens/plantnet_usage/rate_limit, Better Auth wiring with email/password + mailer + bearer plugin, `GET /v1/me`, `PATCH /v1/me`, CI with Postgres service. See the 8-lot roadmap in [`CLAUDE.md`](CLAUDE.md).
+Lots 1 (Bootstrap), 2 (DB & migrations), 3 (Auth), and 4 (Storage) — Hono skeleton, `/v1/health` with DB probe, Drizzle schemas for users/species/identifications/specimens/plantnet_usage/rate_limit, Better Auth wiring with email/password + mailer + bearer plugin, `GET /v1/me`, `PATCH /v1/me`, Garage S3 adapter with presigned URLs, `PUT/DELETE /v1/me/avatar`, CI with Postgres + Garage services. See the 8-lot roadmap in [`CLAUDE.md`](CLAUDE.md).
 
 ## Lot 3 — Auth quickstart
 
@@ -69,3 +69,34 @@ Lots 1 (Bootstrap), 2 (DB & migrations), and 3 (Auth) — Hono skeleton, `/v1/he
    ```bash
    curl -sS http://localhost:3000/v1/me -H "Authorization: Bearer <token>"
    ```
+
+## Lot 4 — Storage quickstart
+
+Garage (S3-compatible) tourne dans le `docker compose` aux côtés de Postgres. Le service `garage-init` provisionne la layout cluster et importe la clé d'accès `GKDEV…` au premier démarrage — les valeurs sont déjà câblées dans `.env.example` (`GARAGE_ENDPOINT`, `GARAGE_ACCESS_KEY`, `GARAGE_SECRET_KEY`, `GARAGE_REGION`). Au boot, l'API crée le bucket `avatars` si absent (skip en `NODE_ENV=production`).
+
+1. **Up**: `docker compose up -d` (postgres + garage + garage-init + mailhog)
+2. **Upload avatar** (JPEG ≤ 2 Mo, magic bytes `FF D8 FF` vérifiés) :
+
+   ```bash
+   curl -sS -X PUT http://localhost:3000/v1/me/avatar \
+     -H "Authorization: Bearer <token>" \
+     -F "photo=@/path/to/photo.jpg;type=image/jpeg"
+   # -> { "avatar_url": "http://localhost:3900/avatars/<user_id>.jpg?X-Amz-…" }
+   ```
+
+   Le `avatar_url` renvoyé est **pré-signé (1h)** — utilisable directement dans un `<Image src>` ou `curl`.
+
+3. **Lire le profil** (le champ `avatar_url` est désormais pré-signé à chaque `GET /me`) :
+
+   ```bash
+   curl -sS http://localhost:3000/v1/me -H "Authorization: Bearer <token>"
+   ```
+
+4. **Supprimer l'avatar** :
+
+   ```bash
+   curl -sS -X DELETE http://localhost:3000/v1/me/avatar \
+     -H "Authorization: Bearer <token>" -i   # 204
+   ```
+
+Codes d'erreur attendus : `400` (champ `photo` manquant ou content-type ≠ jpeg), `413` (> 2 Mo), `415` (pas multipart).
