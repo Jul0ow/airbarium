@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { type User, users } from '@/db/schema';
+import { presignAvatar } from '@/services/photo-storage';
 
 export type ProfileResponse = {
   id: string;
@@ -11,13 +12,13 @@ export type ProfileResponse = {
   created_at: string;
 };
 
-function toResponse(u: User): ProfileResponse {
+async function toResponse(u: User): Promise<ProfileResponse> {
   return {
     id: u.id,
     email: u.email,
     email_verified: u.emailVerified,
     name: u.name,
-    avatar_url: u.avatarUrl ?? null,
+    avatar_url: u.avatarUrl ? await presignAvatar(u.avatarUrl) : null,
     created_at: u.createdAt.toISOString(),
   };
 }
