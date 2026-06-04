@@ -24,6 +24,10 @@ const EnvSchema = z.object({
   SMTP_URL: SmtpUrl,
   MAIL_FROM: z.string().min(1),
   APP_URL: z.string().url(),
+  GARAGE_ENDPOINT: z.string().url(),
+  GARAGE_ACCESS_KEY: z.string().min(1),
+  GARAGE_SECRET_KEY: z.string().min(1),
+  GARAGE_REGION: z.string().min(1).default('garage'),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

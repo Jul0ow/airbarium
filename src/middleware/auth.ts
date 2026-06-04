@@ -1,5 +1,5 @@
-import type { MiddlewareHandler } from 'hono';
-import type { AppEnv } from '@/app-env';
+import type { Context, MiddlewareHandler } from 'hono';
+import type { AppEnv, AuthVariables } from '@/app-env';
 import { auth } from '@/auth/better-auth';
 import { UnauthorizedError } from '@/utils/errors';
 
@@ -14,3 +14,9 @@ export const authMiddleware = (): MiddlewareHandler<AppEnv> => {
     await next();
   };
 };
+
+export function requireUser(c: Context<AppEnv>): AuthVariables['user'] {
+  const user = c.get('user');
+  if (!user) throw new Error('unreachable: authMiddleware guards this route');
+  return user;
+}

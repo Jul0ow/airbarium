@@ -32,6 +32,10 @@ jobs:
       SMTP_URL: smtp://localhost:1025
       MAIL_FROM: "Airbarium CI <noreply@airbarium.app>"
       APP_URL: http://localhost:8081
+      GARAGE_ENDPOINT: http://localhost:3900
+      GARAGE_ACCESS_KEY: GKDEV0000000000000000000000000000000000000
+      GARAGE_SECRET_KEY: SKDEV0000000000000000000000000000000000000000000000000000000000
+      GARAGE_REGION: garage
 
     steps:
       - uses: actions/checkout@v5
@@ -58,6 +62,23 @@ jobs:
 
       - name: Lint
         run: nix develop --command bun run lint
+
+      - name: Start Garage
+        run: docker compose up -d garage garage-init
+
+      - name: Wait for garage-init to complete
+        run: |
+          for i in $(seq 1 30); do
+            if docker compose ps -a --services --filter "status=exited" | grep -q '^garage-init$'; then
+              echo "garage-init exited"
+              docker compose logs garage-init
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "garage-init did not finish in 60s"
+          docker compose logs garage-init
+          exit 1
 
       - name: Migrate DB
         run: nix develop --command bun run db:migrate

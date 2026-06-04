@@ -27,6 +27,9 @@ export async function truncateAll() {
   `);
 }
 
+// Available for one-off scripts; do NOT call from a test file. Bun shares the
+// postgres-js client across files, so closing it here breaks every test that
+// runs after this file in the suite.
 export async function teardownTestDb() {
   await rawClient.end();
 }
