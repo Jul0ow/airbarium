@@ -38,8 +38,9 @@ Ce lot dépend des Lots 1-4 (Hono skeleton, schemas Drizzle, Better Auth, `lib/g
 | Trigger Wikipedia | `queueMicrotask` uniquement sur species nouvellement créées dans CET appel | Code simple, pas de scan DB, pas de double-fetch en cas de requêtes concurrentes du même nom |
 | Wikipedia 404 | Set `wikipedia_fetched_at = now()` quand même, `description` reste NULL | Évite des retries infinis. La règle "tenté = fetched_at non-null" suffit |
 | Wikipedia erreur 5xx / timeout | Silent (log warn), pas de mise à jour `wikipedia_fetched_at` → un cron Lot 8 pourra retenter | L'absence de mise à jour signale "non tenté avec succès" |
-| PlantNet timeout | 10 secondes via `AbortController` | Aligné spec §8.1 |
-| PlantNet params | `organs=flower`, `lang=fr`, `nb-results=3` (fixés en dur) | Hors scope MVP de laisser le client choisir l'organe |
+| PlantNet timeout | 10 secondes via `AbortController` | Aligné spec MVP §8.1 |
+| PlantNet params | **Query params** : `lang=fr`, `nb-results=3`, `include-related-images=true`, `api-key=<KEY>`. **Form fields multipart** : `organs=flower`, `images=<jpeg>` | Découvert via fixtures réelles : seuls `organs` et `images` sont en form data. La spec MVP §8.1 était ambiguë |
+| Format photo accepté côté API | JPEG strict (magic bytes + `image/jpeg`) | PlantNet accepte d'autres formats (PNG, WebP) mais le mobile convertit en JPEG 85% (cf. spec MVP §7.1). Notre validation reste stricte côté serveur |
 | Mock PlantNet en CI | Swap pattern via `__setPlantnetForTests` | Identique à `lib/mailer` et `lib/garage` (Lots 3-4) |
 | Auth sur `GET /v1/species/:id` | Requise | Cohérence cross-endpoints. Pas de cache CDN public envisagé en MVP |
 
@@ -67,6 +68,63 @@ GET /v1/species/:id
 ```
 
 `lib/plantnet.ts` et `lib/wikipedia.ts` sont des adapters purs (HTTP + parse). Aucune connaissance de DB ni de quota. Les services portent la business logic. La frontière mockable est `lib/*` (via `__setForTests`).
+
+### 3.1 Intégration PlantNet — détails
+
+**Requête** :
+
+```
+POST https://my-api.plantnet.org/v2/identify/all
+   ?api-key=<PLANTNET_API_KEY>
+   &lang=fr
+   &nb-results=3
+   &include-related-images=true
+
+Content-Type: multipart/form-data; boundary=...
+  organs=flower
+  images=<binary jpeg buffer>
+```
+
+`include-related-images=true` est **nécessaire** pour que `results[].images` soit présent dans la réponse, sinon `reference_photo_url` serait toujours `null`.
+
+**Mapping réponse → DB** (par result, top + alternatives) :
+
+| Champ DB `species` | Source réponse PlantNet |
+|---|---|
+| `scientific_name` (clé d'unicité) | `result.species.scientificNameWithoutAuthor` (ex. `"Lycoris radiata"`) |
+| `common_name` | `result.species.commonNames[0] ?? null` (tableau, peut être vide) |
+| `family` | `result.species.family.scientificNameWithoutAuthor` (objet nested) |
+| `reference_photo_url` | `result.images?.[0]?.url?.m ?? null` (taille "m" = medium) |
+
+**Mapping réponse → DB `identifications`** :
+
+| Champ DB | Source |
+|---|---|
+| `plantnet_raw_response` | Réponse JSON complète (jsonb), inclut `gbif.id`, `powo.id`, `bestMatch`, `version`, `remainingIdentificationRequests`, etc. pour futur audit |
+| `top_match_species_id` | FK vers species upsertée pour `results[0]` |
+| `top_match_confidence` | `results[0].score` (numeric 5,4) |
+
+**Erreurs PlantNet → erreurs API** :
+
+| PlantNet | API |
+|---|---|
+| 200 + `results: []` | 422 `NO_MATCH` |
+| 429 (quota global PlantNet) | 502 `PLANTNET_UNAVAILABLE` + log alerte |
+| 5xx | 502 `PLANTNET_UNAVAILABLE` |
+| Timeout 10s | 502 `PLANTNET_UNAVAILABLE` |
+
+**Champ bonus `remainingIdentificationRequests`** : présent dans toutes les réponses 200. À logger en `debug` pour observabilité (alerte si < 50 = approche du quota free tier 500/jour). Hors scope Lot 5, à reprendre en Lot 8 (métriques Prometheus).
+
+**Champs `gbif.id` / `powo.id`** : présents par result. Hors scope MVP (référentiels externes). Conservés dans `plantnet_raw_response` pour V2.
+
+**Fixtures réelles disponibles** (committées dans le worktree `feat/lot-5-identifications`) :
+
+- `tests/fixtures/plantnet_lycoris.json` — top match `Lycoris radiata` à 0.92331, 3 common names, family `Amaryllidaceae`. Cas auto_pickable.
+- `tests/fixtures/plantnet_blurred.json` — top match `Myriophyllum alterniflorum` à 0.26087, `commonNames` vide pour certaines alternatives. Cas auto_pickable=false.
+
+Ces fixtures servent de golden samples pour les unit tests de `lib/plantnet.ts` (validation du parse + mapping sans appel réseau).
+
+**Limitation actuelle des fixtures** : elles ont été capturées sans `include-related-images=true`, donc `results[].images` est absent. Les unit tests doivent soit (a) capturer une 3e fixture `plantnet_lycoris_with_images.json` avec le param activé (recommandé pour un golden sample complet), soit (b) construire une fixture synthétique en injectant un champ `images: [{url: {m: "https://bs.plantnet.org/..."}}]` dans une copie. Action à prendre avant l'implémentation de `lib/plantnet.ts`.
 
 ## 4. Fichiers
 
@@ -181,7 +239,7 @@ Notes :
 }
 ```
 
-`description` / `wikipedia_url` peuvent être `null` si l'enrichissement n'a pas eu lieu ou a 404'd. `reference_photo_url` est la dernière URL PlantNet vue (peut être stale en V2 si la photo est retirée par PlantNet — accepté en MVP).
+`description` / `wikipedia_url` peuvent être `null` si l'enrichissement n'a pas eu lieu ou a 404'd. `reference_photo_url` est la dernière URL PlantNet vue (peut être stale en V2 si la photo est retirée par PlantNet — accepté en MVP). Peut être `null` également si PlantNet n'a pas retourné d'image (cas où la requête a oublié `include-related-images=true`, mais on garantit son ajout côté `lib/plantnet.ts`).
 
 **Errors** :
 - 401 `UNAUTHORIZED`
@@ -230,8 +288,14 @@ Notes :
 12. if results.length === 0 → throw AppError('NO_MATCH', 422) (PAS de refund)
 13. identificationId = uuid7()
     await garage.putObject({ bucket:'specimens', key:`${user.id}/${identificationId}.jpg`, body:buffer, contentType:'image/jpeg' })
-14. For each result (top + alternatives):
-      const { species, isNew } = await speciesService.upsertFromPlantnet(result)
+14. For each result (top + alternatives), extract via le mapping §3.1 :
+      input = {
+        scientificName: result.species.scientificNameWithoutAuthor,
+        commonName: result.species.commonNames[0] ?? null,
+        family: result.species.family.scientificNameWithoutAuthor,
+        referencePhotoUrl: result.images?.[0]?.url?.m ?? null,
+      }
+      const { species, isNew } = await speciesService.upsertFromPlantnet(input)
       if isNew: scheduleEnrichment(species.id)
 15. db.insert(identifications).values({
       id: identificationId,
@@ -327,7 +391,7 @@ Le flux §6.1 incrémente le quota (étape 10), appelle PlantNet (étape 11), pu
 
 ### 8.1 Unit
 
-- **`lib/plantnet.ts`** : mock `globalThis.fetch`. Cas : response 200 avec results, response 200 avec results vide, 5xx, 429, AbortError (timeout). Vérifie le multipart form (champ `organs=flower`, `images`, `lang=fr`, `nb-results=3`).
+- **`lib/plantnet.ts`** : mock `globalThis.fetch`. Cas : response 200 sur fixture `plantnet_lycoris.json` (auto_pickable=true), response 200 sur fixture `plantnet_blurred.json` (auto_pickable=false, commonNames vides sur alternatives), response 200 avec `results: []` (NO_MATCH), 5xx, 429, AbortError (timeout). Vérifie l'URL (`organs` et `images` en form fields, `lang`/`nb-results`/`include-related-images`/`api-key` en query params), Content-Type, et le mapping (`commonNames[0] ?? null`, `family.scientificNameWithoutAuthor`, `images?.[0]?.url?.m ?? null`).
 - **`lib/wikipedia.ts`** : mock `globalThis.fetch`. Cas : 200 avec extract+content_urls, 404 → null, 5xx → throw, vérifie header `User-Agent` envoyé.
 - **`services/quota.ts`** : real DB. 1er appel, 30e appel (count = 30, ok), 31e appel (count = 31 → refund → throw). Refund explicite après un succès.
 - **`services/species.ts`** : real DB. Upsert nouveau (`is_new = true`), upsert existant (`is_new = false`, `updated_at` mis à jour). `getById` happy + 404.
