@@ -86,8 +86,8 @@ export async function softDelete(userId: string, id: string): Promise<void> {
 }
 
 export type PatchInput = {
-  user_notes?: string | null;
-  location_label?: string | null;
+  user_notes?: string | null | undefined;
+  location_label?: string | null | undefined;
 };
 
 export async function patch(
@@ -251,10 +251,10 @@ export type CreateInput = {
   chosen_species_id: string;
   identification_source: 'plantnet_auto' | 'plantnet_picked';
   collected_at: Date;
-  lat?: number;
-  lng?: number;
-  location_label?: string;
-  user_notes?: string;
+  lat?: number | undefined;
+  lng?: number | undefined;
+  location_label?: string | undefined;
+  user_notes?: string | undefined;
 };
 
 export type CreateResult = {
