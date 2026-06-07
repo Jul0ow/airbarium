@@ -1,8 +1,9 @@
-import { and, asc, desc, eq, gt, gte, ilike, isNull, lt, lte, or, sql } from 'drizzle-orm';
-import { SPECIMENS_BUCKET } from '@/config/constants';
+import { and, asc, desc, eq, gt, gte, ilike, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm';
+import { CONFIDENCE_THRESHOLD, SPECIMENS_BUCKET } from '@/config/constants';
 import { db } from '@/db/client';
-import { type Specimen, specimens } from '@/db/schema';
+import { identifications, type Specimen, species as speciesTable, specimens } from '@/db/schema';
 import { getPresignedUrl } from '@/lib/garage';
+import type { PlantnetRawResponse } from '@/lib/plantnet';
 import { type Cursor, decodeCursor, encodeCursor } from '@/utils/cursor';
 import { AppError } from '@/utils/errors';
 
@@ -242,4 +243,165 @@ export async function list(userId: string, params: ListParams): Promise<ListResu
   }
 
   return { data, next_cursor: nextCursor };
+}
+
+export type CreateInput = {
+  id: string;
+  identification_id: string;
+  chosen_species_id: string;
+  identification_source: 'plantnet_auto' | 'plantnet_picked';
+  collected_at: Date;
+  lat?: number;
+  lng?: number;
+  location_label?: string;
+  user_notes?: string;
+};
+
+export type CreateResult = {
+  specimen: SpecimenResponse;
+  wasCreated: boolean;
+};
+
+type RawResult = {
+  species?: { scientificNameWithoutAuthor?: string };
+  score?: number;
+};
+
+function pickRawResults(raw: PlantnetRawResponse): RawResult[] {
+  const arr = (raw as { results?: unknown }).results;
+  return Array.isArray(arr) ? (arr as RawResult[]) : [];
+}
+
+export async function create(userId: string, input: CreateInput): Promise<CreateResult> {
+  // 1. Idempotence check
+  const [existing] = await db.select().from(specimens).where(eq(specimens.id, input.id));
+  if (existing) {
+    if (existing.userId !== userId) {
+      throw new AppError('ID_CONFLICT', `specimen id ${input.id} belongs to another user`, 409);
+    }
+    return { specimen: await toSpecimenResponse(existing), wasCreated: false };
+  }
+
+  // 2. Load identification
+  const [ident] = await db
+    .select()
+    .from(identifications)
+    .where(eq(identifications.id, input.identification_id));
+  if (!ident || ident.userId !== userId) {
+    throw new AppError(
+      'IDENTIFICATION_NOT_FOUND',
+      `identification ${input.identification_id} not found`,
+      404,
+    );
+  }
+  if (ident.photoStatus !== 'temp') {
+    throw new AppError(
+      'ALREADY_PROMOTED',
+      `identification ${ident.id} has already been consumed`,
+      409,
+    );
+  }
+  if (ident.expiresAt && ident.expiresAt.getTime() <= Date.now()) {
+    throw new AppError('IDENTIFICATION_EXPIRED', `identification ${ident.id} has expired`, 410);
+  }
+
+  // 3. Build pool of candidates
+  const rawResults = pickRawResults(ident.plantnetRawResponse);
+  const scientificNames = rawResults
+    .map((r) => r.species?.scientificNameWithoutAuthor)
+    .filter((s): s is string => typeof s === 'string');
+  if (scientificNames.length === 0) {
+    throw new AppError('INVALID_CHOICE', 'identification has no candidate species', 400);
+  }
+  const pool = await db
+    .select({ id: speciesTable.id, scientificName: speciesTable.scientificName })
+    .from(speciesTable)
+    .where(inArray(speciesTable.scientificName, scientificNames));
+  const poolIds = new Set(pool.map((p) => p.id));
+  if (!poolIds.has(input.chosen_species_id)) {
+    throw new AppError(
+      'INVALID_CHOICE',
+      'chosen_species_id is not part of this identification candidates',
+      400,
+    );
+  }
+
+  // 4. Threshold rule
+  const topConfidence = ident.topMatchConfidence === null ? 0 : Number(ident.topMatchConfidence);
+  const isHigh = topConfidence >= CONFIDENCE_THRESHOLD;
+  if (isHigh) {
+    if (
+      input.chosen_species_id !== ident.topMatchSpeciesId ||
+      input.identification_source !== 'plantnet_auto'
+    ) {
+      throw new AppError(
+        'THRESHOLD_VIOLATED',
+        `confidence >= ${CONFIDENCE_THRESHOLD} requires auto-pick of the top match`,
+        400,
+      );
+    }
+  } else {
+    if (input.identification_source !== 'plantnet_picked') {
+      throw new AppError(
+        'THRESHOLD_VIOLATED',
+        `confidence < ${CONFIDENCE_THRESHOLD} requires plantnet_picked`,
+        400,
+      );
+    }
+  }
+
+  // 5. Snapshot resolution
+  const chosenPool = pool.find((p) => p.id === input.chosen_species_id);
+  if (!chosenPool) throw new Error('unreachable: chosen verified above');
+  const chosenIdx = rawResults.findIndex(
+    (r) => r.species?.scientificNameWithoutAuthor === chosenPool.scientificName,
+  );
+  const chosenScore = chosenIdx >= 0 ? (rawResults[chosenIdx]?.score ?? null) : null;
+  const [chosenSpeciesRow] = await db
+    .select()
+    .from(speciesTable)
+    .where(eq(speciesTable.id, input.chosen_species_id));
+  if (!chosenSpeciesRow) throw new Error('unreachable: species existed during pool select');
+
+  // 6. Transactional insert + promote
+  const inserted = await db.transaction(async (tx) => {
+    const [row] = await tx
+      .insert(specimens)
+      .values({
+        id: input.id,
+        userId,
+        identificationId: ident.id,
+        speciesId: chosenSpeciesRow.id,
+        photoUrl: ident.photoUrl,
+        identifiedName: chosenSpeciesRow.commonName,
+        scientificName: chosenSpeciesRow.scientificName,
+        family: chosenSpeciesRow.family,
+        confidenceScore: chosenScore === null ? null : chosenScore.toFixed(4),
+        identificationSource: input.identification_source,
+        lat: input.lat === undefined ? null : input.lat.toFixed(6),
+        lng: input.lng === undefined ? null : input.lng.toFixed(6),
+        locationLabel: input.location_label ?? null,
+        userNotes: input.user_notes ?? null,
+        collectedAt: input.collected_at,
+      })
+      .returning();
+    if (!row) throw new Error('insert returned no row');
+
+    const promotedRows = await tx
+      .update(identifications)
+      .set({ photoStatus: 'promoted', promotedAt: new Date() })
+      .where(and(eq(identifications.id, ident.id), eq(identifications.photoStatus, 'temp')))
+      .returning({ id: identifications.id });
+    if (promotedRows.length === 0) {
+      throw new AppError(
+        'ALREADY_PROMOTED',
+        `identification ${ident.id} was concurrently promoted`,
+        409,
+      );
+    }
+
+    return row;
+  });
+
+  return { specimen: await toSpecimenResponse(inserted), wasCreated: true };
 }

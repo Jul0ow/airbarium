@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { eq } from 'drizzle-orm';
-import { species, specimens, users } from '@/db/schema';
+import { identifications, species, specimens, users } from '@/db/schema';
 import { __setGarageForTests } from '@/lib/garage';
 import * as service from '@/services/specimens';
 import type { AppError } from '@/utils/errors';
@@ -36,6 +36,29 @@ async function makeSpecies(scientific = 'Papaver rhoeas'): Promise<string> {
   await testDb
     .insert(species)
     .values({ id, scientificName: scientific, commonName: 'Coquelicot', family: 'Papaveraceae' });
+  return id;
+}
+
+async function makeIdentification(
+  userId: string,
+  opts: { speciesId: string; confidence: number },
+): Promise<string> {
+  const id = uuid7();
+  const raw = {
+    results: [
+      { species: { scientificNameWithoutAuthor: 'Papaver rhoeas' }, score: opts.confidence },
+    ],
+  };
+  await testDb.insert(identifications).values({
+    id,
+    userId,
+    photoUrl: `${userId}/${id}.jpg`,
+    photoStatus: 'temp',
+    plantnetRawResponse: raw,
+    topMatchSpeciesId: opts.speciesId,
+    topMatchConfidence: opts.confidence.toFixed(4),
+    expiresAt: new Date(Date.now() + 24 * 3600 * 1000),
+  });
   return id;
 }
 
@@ -413,6 +436,319 @@ describe('service.list', () => {
     } catch (e) {
       expect((e as AppError).status).toBe(400);
       expect((e as AppError).code).toBe('INVALID_CURSOR');
+    }
+  });
+});
+
+describe('service.create', () => {
+  async function setup() {
+    const uid = await makeUser();
+    const sp = await makeSpecies('Papaver rhoeas');
+    const sp2 = await makeSpecies('Bellis perennis');
+    const idn = await makeIdentification(uid, { speciesId: sp, confidence: 0.95 });
+    return { uid, sp, sp2, idn };
+  }
+
+  it('returns 201-like wasCreated=true on happy path (plantnet_auto, high confidence)', async () => {
+    const { uid, sp, idn } = await setup();
+    const sid = uuid7();
+    const out = await service.create(uid, {
+      id: sid,
+      identification_id: idn,
+      chosen_species_id: sp,
+      identification_source: 'plantnet_auto',
+      collected_at: new Date('2026-06-07T10:00:00Z'),
+    });
+    expect(out.wasCreated).toBe(true);
+    expect(out.specimen.id).toBe(sid);
+    expect(out.specimen.identification_id).toBe(idn);
+    expect(out.specimen.species_id).toBe(sp);
+    expect(out.specimen.identification_source).toBe('plantnet_auto');
+    expect(out.specimen.scientific_name).toBe('Papaver rhoeas');
+    expect(out.specimen.identified_name).toBe('Coquelicot');
+    expect(out.specimen.family).toBe('Papaveraceae');
+    expect(out.specimen.confidence_score).toBe(0.95);
+    expect(out.specimen.photo_url).toContain('?sig=stub');
+
+    const [ident] = await testDb.select().from(identifications).where(eq(identifications.id, idn));
+    expect(ident?.photoStatus).toBe('promoted');
+    expect(ident?.promotedAt).toBeInstanceOf(Date);
+  });
+
+  it('reuses the identification photo key (no S3 copy)', async () => {
+    const { uid, sp, idn } = await setup();
+    const sid = uuid7();
+    await service.create(uid, {
+      id: sid,
+      identification_id: idn,
+      chosen_species_id: sp,
+      identification_source: 'plantnet_auto',
+      collected_at: new Date(),
+    });
+    const [spec] = await testDb.select().from(specimens).where(eq(specimens.id, sid));
+    const [ident] = await testDb.select().from(identifications).where(eq(identifications.id, idn));
+    expect(spec?.photoUrl).toBe(ident?.photoUrl);
+  });
+
+  it('happy path plantnet_picked (low confidence, alternative chosen)', async () => {
+    const uid = await makeUser();
+    const sp = await makeSpecies('Papaver rhoeas');
+    const spAlt = await makeSpecies('Bellis perennis');
+    const idn = uuid7();
+    await testDb.insert(identifications).values({
+      id: idn,
+      userId: uid,
+      photoUrl: `${uid}/${idn}.jpg`,
+      photoStatus: 'temp',
+      plantnetRawResponse: {
+        results: [
+          { species: { scientificNameWithoutAuthor: 'Papaver rhoeas' }, score: 0.4 },
+          { species: { scientificNameWithoutAuthor: 'Bellis perennis' }, score: 0.3 },
+        ],
+      },
+      topMatchSpeciesId: sp,
+      topMatchConfidence: '0.4000',
+      expiresAt: new Date(Date.now() + 3600 * 1000),
+    });
+
+    const sid = uuid7();
+    const out = await service.create(uid, {
+      id: sid,
+      identification_id: idn,
+      chosen_species_id: spAlt,
+      identification_source: 'plantnet_picked',
+      collected_at: new Date(),
+    });
+    expect(out.wasCreated).toBe(true);
+    expect(out.specimen.species_id).toBe(spAlt);
+    expect(out.specimen.scientific_name).toBe('Bellis perennis');
+    expect(out.specimen.confidence_score).toBe(0.3);
+    expect(out.specimen.identification_source).toBe('plantnet_picked');
+  });
+
+  it('idempotent: replay with same id returns wasCreated=false + existing specimen', async () => {
+    const { uid, sp, idn } = await setup();
+    const sid = uuid7();
+    const first = await service.create(uid, {
+      id: sid,
+      identification_id: idn,
+      chosen_species_id: sp,
+      identification_source: 'plantnet_auto',
+      collected_at: new Date(),
+    });
+    const second = await service.create(uid, {
+      id: sid,
+      identification_id: idn,
+      chosen_species_id: sp,
+      identification_source: 'plantnet_auto',
+      collected_at: new Date('2099-01-01'),
+    });
+    expect(second.wasCreated).toBe(false);
+    expect(second.specimen.id).toBe(sid);
+    expect(second.specimen.collected_at).toBe(first.specimen.collected_at);
+  });
+
+  it('returns 409 ID_CONFLICT when id exists for another user', async () => {
+    const { uid, sp, idn } = await setup();
+    const sid = uuid7();
+    await service.create(uid, {
+      id: sid,
+      identification_id: idn,
+      chosen_species_id: sp,
+      identification_source: 'plantnet_auto',
+      collected_at: new Date(),
+    });
+
+    const u2 = await makeUser();
+    const sp2 = await makeSpecies('Rosa canina');
+    const idn2 = await makeIdentification(u2, { speciesId: sp2, confidence: 0.95 });
+    try {
+      await service.create(u2, {
+        id: sid,
+        identification_id: idn2,
+        chosen_species_id: sp2,
+        identification_source: 'plantnet_auto',
+        collected_at: new Date(),
+      });
+      expect.unreachable();
+    } catch (e) {
+      expect((e as AppError).status).toBe(409);
+      expect((e as AppError).code).toBe('ID_CONFLICT');
+    }
+  });
+
+  it('returns 404 IDENTIFICATION_NOT_FOUND when identification belongs to other user', async () => {
+    const { sp, idn } = await setup();
+    const u2 = await makeUser();
+    try {
+      await service.create(u2, {
+        id: uuid7(),
+        identification_id: idn,
+        chosen_species_id: sp,
+        identification_source: 'plantnet_auto',
+        collected_at: new Date(),
+      });
+      expect.unreachable();
+    } catch (e) {
+      expect((e as AppError).code).toBe('IDENTIFICATION_NOT_FOUND');
+      expect((e as AppError).status).toBe(404);
+    }
+  });
+
+  it('returns 404 IDENTIFICATION_NOT_FOUND when identification missing', async () => {
+    const uid = await makeUser();
+    const sp = await makeSpecies();
+    try {
+      await service.create(uid, {
+        id: uuid7(),
+        identification_id: uuid7(),
+        chosen_species_id: sp,
+        identification_source: 'plantnet_auto',
+        collected_at: new Date(),
+      });
+      expect.unreachable();
+    } catch (e) {
+      expect((e as AppError).code).toBe('IDENTIFICATION_NOT_FOUND');
+    }
+  });
+
+  it('returns 409 ALREADY_PROMOTED when identification already promoted', async () => {
+    const { uid, sp, idn } = await setup();
+    await testDb
+      .update(identifications)
+      .set({ photoStatus: 'promoted', promotedAt: new Date() })
+      .where(eq(identifications.id, idn));
+    try {
+      await service.create(uid, {
+        id: uuid7(),
+        identification_id: idn,
+        chosen_species_id: sp,
+        identification_source: 'plantnet_auto',
+        collected_at: new Date(),
+      });
+      expect.unreachable();
+    } catch (e) {
+      expect((e as AppError).code).toBe('ALREADY_PROMOTED');
+      expect((e as AppError).status).toBe(409);
+    }
+  });
+
+  it('returns 410 IDENTIFICATION_EXPIRED when expires_at <= now()', async () => {
+    const { uid, sp, idn } = await setup();
+    await testDb
+      .update(identifications)
+      .set({ expiresAt: new Date(Date.now() - 1000) })
+      .where(eq(identifications.id, idn));
+    try {
+      await service.create(uid, {
+        id: uuid7(),
+        identification_id: idn,
+        chosen_species_id: sp,
+        identification_source: 'plantnet_auto',
+        collected_at: new Date(),
+      });
+      expect.unreachable();
+    } catch (e) {
+      expect((e as AppError).code).toBe('IDENTIFICATION_EXPIRED');
+      expect((e as AppError).status).toBe(410);
+    }
+  });
+
+  it('returns 400 INVALID_CHOICE when chosen_species_id not in pool', async () => {
+    const { uid, idn } = await setup();
+    const foreignSp = await makeSpecies('Random species');
+    try {
+      await service.create(uid, {
+        id: uuid7(),
+        identification_id: idn,
+        chosen_species_id: foreignSp,
+        identification_source: 'plantnet_auto',
+        collected_at: new Date(),
+      });
+      expect.unreachable();
+    } catch (e) {
+      expect((e as AppError).code).toBe('INVALID_CHOICE');
+      expect((e as AppError).status).toBe(400);
+    }
+  });
+
+  it('returns 400 THRESHOLD_VIOLATED when high confidence + plantnet_picked', async () => {
+    const { uid, sp, idn } = await setup();
+    try {
+      await service.create(uid, {
+        id: uuid7(),
+        identification_id: idn,
+        chosen_species_id: sp,
+        identification_source: 'plantnet_picked',
+        collected_at: new Date(),
+      });
+      expect.unreachable();
+    } catch (e) {
+      expect((e as AppError).code).toBe('THRESHOLD_VIOLATED');
+    }
+  });
+
+  it('returns 400 THRESHOLD_VIOLATED when high confidence + chosen != top', async () => {
+    const uid = await makeUser();
+    const sp = await makeSpecies('Papaver rhoeas');
+    const spAlt = await makeSpecies('Bellis perennis');
+    const idn = uuid7();
+    await testDb.insert(identifications).values({
+      id: idn,
+      userId: uid,
+      photoUrl: `${uid}/${idn}.jpg`,
+      photoStatus: 'temp',
+      plantnetRawResponse: {
+        results: [
+          { species: { scientificNameWithoutAuthor: 'Papaver rhoeas' }, score: 0.9 },
+          { species: { scientificNameWithoutAuthor: 'Bellis perennis' }, score: 0.05 },
+        ],
+      },
+      topMatchSpeciesId: sp,
+      topMatchConfidence: '0.9000',
+      expiresAt: new Date(Date.now() + 3600 * 1000),
+    });
+    try {
+      await service.create(uid, {
+        id: uuid7(),
+        identification_id: idn,
+        chosen_species_id: spAlt,
+        identification_source: 'plantnet_auto',
+        collected_at: new Date(),
+      });
+      expect.unreachable();
+    } catch (e) {
+      expect((e as AppError).code).toBe('THRESHOLD_VIOLATED');
+    }
+  });
+
+  it('returns 400 THRESHOLD_VIOLATED when low confidence + plantnet_auto', async () => {
+    const uid = await makeUser();
+    const sp = await makeSpecies('Papaver rhoeas');
+    const idn = uuid7();
+    await testDb.insert(identifications).values({
+      id: idn,
+      userId: uid,
+      photoUrl: `${uid}/${idn}.jpg`,
+      photoStatus: 'temp',
+      plantnetRawResponse: {
+        results: [{ species: { scientificNameWithoutAuthor: 'Papaver rhoeas' }, score: 0.3 }],
+      },
+      topMatchSpeciesId: sp,
+      topMatchConfidence: '0.3000',
+      expiresAt: new Date(Date.now() + 3600 * 1000),
+    });
+    try {
+      await service.create(uid, {
+        id: uuid7(),
+        identification_id: idn,
+        chosen_species_id: sp,
+        identification_source: 'plantnet_auto',
+        collected_at: new Date(),
+      });
+      expect.unreachable();
+    } catch (e) {
+      expect((e as AppError).code).toBe('THRESHOLD_VIOLATED');
     }
   });
 });
