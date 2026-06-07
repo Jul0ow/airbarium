@@ -1,5 +1,5 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
-import { and, eq, sql } from 'drizzle-orm';
+import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { and, eq } from 'drizzle-orm';
 import { plantnetUsage, users } from '@/db/schema';
 import { incrementOrThrow, refund } from '@/services/quota';
 import { uuid7 } from '@/utils/uuid';
