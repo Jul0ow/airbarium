@@ -8,8 +8,9 @@ const app = createApp();
 if (env.NODE_ENV !== 'production') {
   try {
     await ensureBucket('avatars');
+    await ensureBucket('specimens');
   } catch (err) {
-    logger.warn({ err }, 'startup: ensureBucket(avatars) failed — continuing anyway');
+    logger.warn({ err }, 'startup: ensureBucket failed — continuing anyway');
   }
 }
 
