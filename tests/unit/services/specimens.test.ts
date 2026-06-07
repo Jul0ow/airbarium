@@ -177,3 +177,62 @@ describe('service.stats', () => {
     expect((await service.stats(u2)).total).toBe(1);
   });
 });
+
+describe('service.patch', () => {
+  it('returns 404 when specimen does not exist', async () => {
+    const uid = await makeUser();
+    try {
+      await service.patch(uid, uuid7(), { user_notes: 'x' });
+      expect.unreachable();
+    } catch (e) {
+      expect((e as AppError).status).toBe(404);
+    }
+  });
+
+  it('returns 404 when specimen belongs to another user', async () => {
+    const u1 = await makeUser();
+    const u2 = await makeUser();
+    const sid = await makeSpecimen(u1);
+    try {
+      await service.patch(u2, sid, { user_notes: 'x' });
+      expect.unreachable();
+    } catch (e) {
+      expect((e as AppError).status).toBe(404);
+    }
+  });
+
+  it('updates user_notes when provided', async () => {
+    const uid = await makeUser();
+    const sid = await makeSpecimen(uid);
+    const out = await service.patch(uid, sid, { user_notes: 'hello world' });
+    expect(out.user_notes).toBe('hello world');
+  });
+
+  it('clears user_notes when null', async () => {
+    const uid = await makeUser();
+    const sid = await makeSpecimen(uid);
+    await service.patch(uid, sid, { user_notes: 'first' });
+    const out = await service.patch(uid, sid, { user_notes: null });
+    expect(out.user_notes).toBeNull();
+  });
+
+  it('does not touch fields that are not provided', async () => {
+    const uid = await makeUser();
+    const sid = await makeSpecimen(uid);
+    await service.patch(uid, sid, { user_notes: 'kept' });
+    const out = await service.patch(uid, sid, { location_label: 'Paris' });
+    expect(out.user_notes).toBe('kept');
+    expect(out.location_label).toBe('Paris');
+  });
+
+  it('bumps updated_at', async () => {
+    const uid = await makeUser();
+    const sid = await makeSpecimen(uid);
+    const before = await service.getById(uid, sid);
+    await new Promise((r) => setTimeout(r, 5));
+    const after = await service.patch(uid, sid, { user_notes: 'x' });
+    expect(new Date(after.updated_at).getTime()).toBeGreaterThan(
+      new Date(before.updated_at).getTime(),
+    );
+  });
+});

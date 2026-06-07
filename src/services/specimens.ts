@@ -83,6 +83,39 @@ export async function softDelete(userId: string, id: string): Promise<void> {
     .where(eq(specimens.id, id));
 }
 
+export type PatchInput = {
+  user_notes?: string | null;
+  location_label?: string | null;
+};
+
+export async function patch(
+  userId: string,
+  id: string,
+  input: PatchInput,
+): Promise<SpecimenResponse> {
+  const [existing] = await db
+    .select()
+    .from(specimens)
+    .where(and(eq(specimens.id, id), eq(specimens.userId, userId), isNull(specimens.deletedAt)));
+  if (!existing) {
+    throw new AppError('SPECIMEN_NOT_FOUND', `specimen ${id} not found`, 404);
+  }
+
+  const patchFields: { userNotes?: string | null; locationLabel?: string | null } = {};
+  if (input.user_notes !== undefined) patchFields.userNotes = input.user_notes;
+  if (input.location_label !== undefined) patchFields.locationLabel = input.location_label;
+
+  const [updated] = await db
+    .update(specimens)
+    .set({ ...patchFields, updatedAt: new Date() })
+    .where(eq(specimens.id, id))
+    .returning();
+  if (!updated) {
+    throw new AppError('SPECIMEN_NOT_FOUND', `specimen ${id} not found`, 404);
+  }
+  return toSpecimenResponse(updated);
+}
+
 export async function stats(userId: string): Promise<StatsResult> {
   const rows = await db.execute<{ total: string; distinct_species: string }>(sql`
     SELECT
