@@ -1,8 +1,15 @@
 import { sql } from 'drizzle-orm';
 import { index, jsonb, numeric, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import type { PlantnetRawResponse } from '@/lib/plantnet';
 import { photoStatusEnum } from './enums';
 import { species } from './species';
 import { users } from './users';
+
+export type IdentificationExifJson = {
+  date_taken?: string;
+  gps_lat?: number;
+  gps_lng?: number;
+};
 
 export const identifications = pgTable(
   'identifications',
@@ -13,10 +20,10 @@ export const identifications = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     photoUrl: text().notNull(),
     photoStatus: photoStatusEnum().notNull().default('temp'),
-    plantnetRawResponse: jsonb().notNull(),
+    plantnetRawResponse: jsonb().$type<PlantnetRawResponse>().notNull(),
     topMatchSpeciesId: uuid().references(() => species.id, { onDelete: 'set null' }),
     topMatchConfidence: numeric({ precision: 5, scale: 4 }),
-    exifMetadata: jsonb(),
+    exifMetadata: jsonb().$type<IdentificationExifJson>(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     expiresAt: timestamp({ withTimezone: true }),
     promotedAt: timestamp({ withTimezone: true }),

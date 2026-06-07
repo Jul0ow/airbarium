@@ -28,6 +28,8 @@ const EnvSchema = z.object({
   GARAGE_ACCESS_KEY: z.string().min(1),
   GARAGE_SECRET_KEY: z.string().min(1),
   GARAGE_REGION: z.string().min(1).default('garage'),
+  PLANTNET_API_KEY: z.string().min(1),
+  WIKIPEDIA_USER_AGENT: z.string().min(1).default('Airbarium/0.1 (dev)'),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
