@@ -3,7 +3,11 @@ import { eq } from 'drizzle-orm';
 import { species } from '@/db/schema';
 import { __setWikipediaForTests, WikipediaUnavailableError } from '@/lib/wikipedia';
 import { upsertFromPlantnet } from '@/services/species';
-import { enrichSpecies, scheduleEnrichment } from '@/services/species-enrichment';
+import {
+  enrichSpecies,
+  flushPendingEnrichments,
+  scheduleEnrichment,
+} from '@/services/species-enrichment';
 import { setupTestDb, testDb, truncateAll } from '../../helpers/db';
 
 let restore: () => void;
@@ -85,7 +89,7 @@ describe('scheduleEnrichment', () => {
     });
     const s = await makeSpecies();
     scheduleEnrichment(s.id);
-    await new Promise((r) => setTimeout(r, 50));
+    await flushPendingEnrichments();
     expect(true).toBe(true);
   });
 });

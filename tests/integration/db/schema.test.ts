@@ -90,7 +90,7 @@ describe('db schema', () => {
       id: identId,
       userId,
       photoUrl: 'x',
-      plantnetRawResponse: {},
+      plantnetRawResponse: { results: [] },
     });
     await testDb.insert(specimens).values({
       id: specId,

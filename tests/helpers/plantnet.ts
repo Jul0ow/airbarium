@@ -1,6 +1,8 @@
 import {
   __setPlantnetForTests,
+  PlantnetQuotaExhaustedError,
   type PlantnetResult,
+  PlantnetTimeoutError,
   PlantnetUnavailableError,
 } from '@/lib/plantnet';
 
@@ -39,11 +41,9 @@ export function installMockPlantnet(opts: MockPlantnetOptions = {}): () => void 
   if (opts.fail === 'timeout') {
     return __setPlantnetForTests({
       identify: async () => {
-        const { PlantnetTimeoutError } = await import('@/lib/plantnet');
         throw new PlantnetTimeoutError();
       },
       identifyRaw: async () => {
-        const { PlantnetTimeoutError } = await import('@/lib/plantnet');
         throw new PlantnetTimeoutError();
       },
     });
@@ -61,11 +61,9 @@ export function installMockPlantnet(opts: MockPlantnetOptions = {}): () => void 
   if (opts.fail === 'quota') {
     return __setPlantnetForTests({
       identify: async () => {
-        const { PlantnetQuotaExhaustedError } = await import('@/lib/plantnet');
         throw new PlantnetQuotaExhaustedError();
       },
       identifyRaw: async () => {
-        const { PlantnetQuotaExhaustedError } = await import('@/lib/plantnet');
         throw new PlantnetQuotaExhaustedError();
       },
     });

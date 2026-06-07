@@ -9,9 +9,14 @@ export type WikiSummary = {
 };
 
 export class WikipediaUnavailableError extends Error {
+  readonly status: number;
+
+  // status = 0 means the request never produced a Response (network error,
+  // timeout, abort). status > 0 is the upstream HTTP code.
   constructor(status: number) {
     super(`Wikipedia upstream error (status=${status})`);
     this.name = 'WikipediaUnavailableError';
+    this.status = status;
   }
 }
 

@@ -1,10 +1,12 @@
 import { and, eq, sql } from 'drizzle-orm';
+import { DAILY_PLANTNET_QUOTA } from '@/config/constants';
 import { db } from '@/db/client';
 import { plantnetUsage } from '@/db/schema';
 import { AppError } from '@/utils/errors';
 
-const DAILY_LIMIT = 30;
-
+// Quota window is per-UTC-day. Users in non-UTC timezones see the reset at
+// midnight UTC, not local midnight — PlantNet's free tier itself has no
+// documented timezone, so UTC is the defensible default.
 function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
@@ -23,13 +25,13 @@ export async function incrementOrThrow(userId: string): Promise<void> {
 
   if (!row) throw new Error('quota: insert returned no row');
 
-  if (row.count > DAILY_LIMIT) {
+  if (row.count > DAILY_PLANTNET_QUOTA) {
     await refund(userId);
     throw new AppError(
       'QUOTA_EXCEEDED',
-      `Daily PlantNet quota of ${DAILY_LIMIT} identifications exceeded`,
+      `Daily PlantNet quota of ${DAILY_PLANTNET_QUOTA} identifications exceeded`,
       429,
-      { limit: DAILY_LIMIT },
+      { limit: DAILY_PLANTNET_QUOTA },
     );
   }
 }

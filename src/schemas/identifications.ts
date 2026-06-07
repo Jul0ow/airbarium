@@ -2,8 +2,12 @@ import { z } from 'zod';
 
 const latitude = z.string().transform((v, ctx) => {
   const n = Number(v);
-  if (!Number.isFinite(n) || n < -90 || n > 90) {
-    ctx.addIssue({ code: 'custom', message: 'invalid latitude' });
+  if (!Number.isFinite(n)) {
+    ctx.addIssue({ code: 'custom', message: 'gps_lat must be a number' });
+    return z.NEVER;
+  }
+  if (n < -90 || n > 90) {
+    ctx.addIssue({ code: 'custom', message: 'gps_lat must be between -90 and 90' });
     return z.NEVER;
   }
   return n;
@@ -11,8 +15,12 @@ const latitude = z.string().transform((v, ctx) => {
 
 const longitude = z.string().transform((v, ctx) => {
   const n = Number(v);
-  if (!Number.isFinite(n) || n < -180 || n > 180) {
-    ctx.addIssue({ code: 'custom', message: 'invalid longitude' });
+  if (!Number.isFinite(n)) {
+    ctx.addIssue({ code: 'custom', message: 'gps_lng must be a number' });
+    return z.NEVER;
+  }
+  if (n < -180 || n > 180) {
+    ctx.addIssue({ code: 'custom', message: 'gps_lng must be between -180 and 180' });
     return z.NEVER;
   }
   return n;
@@ -21,7 +29,7 @@ const longitude = z.string().transform((v, ctx) => {
 const isoDate = z.string().transform((v, ctx) => {
   const d = new Date(v);
   if (Number.isNaN(d.getTime())) {
-    ctx.addIssue({ code: 'custom', message: 'invalid date_taken' });
+    ctx.addIssue({ code: 'custom', message: 'date_taken must be a valid ISO-8601 timestamp' });
     return z.NEVER;
   }
   return d;

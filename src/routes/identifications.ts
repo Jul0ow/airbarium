@@ -11,13 +11,15 @@ const route = new Hono<AppEnv>();
 
 route.post(
   '/identifications',
-  authMiddleware(),
+  // Cap body size before auth so unauthenticated uploads cannot stream MBs
+  // through the TLS layer just to be 401'd afterwards.
   bodyLimit({
     maxSize: JPEG_BODY_LIMIT_BYTES,
     onError: () => {
       throw new AppError('PAYLOAD_TOO_LARGE', 'File exceeds upload body limit', 413);
     },
   }),
+  authMiddleware(),
   async (c) => {
     const user = requireUser(c);
 

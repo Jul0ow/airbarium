@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { eq } from 'drizzle-orm';
 import { identifications, plantnetUsage, species } from '@/db/schema';
+import { flushPendingEnrichments } from '@/services/species-enrichment';
 import { buildTestApp } from '../helpers/app';
 import { bearerHeaders, signUpTestUser } from '../helpers/auth';
 import { setupTestDb, testDb, truncateAll } from '../helpers/db';
@@ -376,7 +377,7 @@ describe('POST /v1/identifications', () => {
     const body = (await res.json()) as { id: string };
     createdKeys.push({ bucket: TEST_SPECIMENS_BUCKET, key: `${u.userId}/${body.id}.jpg` });
 
-    await new Promise((r) => setTimeout(r, 50));
+    await flushPendingEnrichments();
 
     const rows = await testDb.select().from(species);
     const enriched = rows.filter((r) => r.wikipediaFetchedAt !== null);

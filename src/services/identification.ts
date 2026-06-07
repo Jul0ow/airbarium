@@ -1,21 +1,26 @@
+import {
+  CONFIDENCE_THRESHOLD,
+  IDENTIFICATION_TEMP_TTL_MS,
+  SPECIMENS_BUCKET,
+} from '@/config/constants';
 import { db } from '@/db/client';
-import { identifications } from '@/db/schema';
+import { type IdentificationExifJson, identifications } from '@/db/schema';
 import { putObject } from '@/lib/garage';
 import {
   identifyRaw,
   PlantnetQuotaExhaustedError,
+  type PlantnetRawResponse,
   PlantnetTimeoutError,
   PlantnetUnavailableError,
 } from '@/lib/plantnet';
+import { logger } from '@/middleware/logger';
 import { incrementOrThrow, refund } from '@/services/quota';
 import { upsertFromPlantnet } from '@/services/species';
 import { scheduleEnrichment } from '@/services/species-enrichment';
 import { AppError } from '@/utils/errors';
 import { uuid7 } from '@/utils/uuid';
 
-export const CONFIDENCE_THRESHOLD = 0.7;
-const SPECIMENS_BUCKET = 'specimens';
-const TEMP_TTL_MS = 24 * 60 * 60 * 1000;
+export { CONFIDENCE_THRESHOLD };
 
 export type IdentificationExif = {
   dateTaken?: Date;
@@ -41,8 +46,8 @@ export type IdentificationResponse = {
   auto_pickable: boolean;
 };
 
-function buildExifJson(exif: IdentificationExif): Record<string, unknown> | null {
-  const out: Record<string, unknown> = {};
+function buildExifJson(exif: IdentificationExif): IdentificationExifJson | null {
+  const out: IdentificationExifJson = {};
   if (exif.dateTaken) out.date_taken = exif.dateTaken.toISOString();
   if (exif.gpsLat !== undefined) out.gps_lat = exif.gpsLat;
   if (exif.gpsLng !== undefined) out.gps_lng = exif.gpsLng;
@@ -56,7 +61,7 @@ export async function identifyAndStore(
 ): Promise<IdentificationResponse> {
   await incrementOrThrow(userId);
 
-  let raw: unknown;
+  let raw: PlantnetRawResponse;
   let results: Awaited<ReturnType<typeof identifyRaw>>['results'];
   try {
     const r = await identifyRaw(buffer);
@@ -69,6 +74,11 @@ export async function identifyAndStore(
       err instanceof PlantnetQuotaExhaustedError
     ) {
       await refund(userId);
+      if (err instanceof PlantnetQuotaExhaustedError) {
+        // Operator-visible signal: PlantNet's shared 500/day budget is exhausted.
+        // Different runbook than a transient 5xx (contact PlantNet vs wait).
+        logger.error({ userId }, 'plantnet.global_quota_exhausted');
+      }
       throw new AppError('PLANTNET_UNAVAILABLE', 'PlantNet upstream unavailable', 502);
     }
     throw err;
@@ -113,11 +123,11 @@ export async function identifyAndStore(
     userId,
     photoUrl: key,
     photoStatus: 'temp',
-    plantnetRawResponse: raw as never,
+    plantnetRawResponse: raw,
     topMatchSpeciesId: topPair.species.id,
     topMatchConfidence: topResult.score.toFixed(4),
-    exifMetadata: buildExifJson(exif) as never,
-    expiresAt: new Date(Date.now() + TEMP_TTL_MS),
+    exifMetadata: buildExifJson(exif),
+    expiresAt: new Date(Date.now() + IDENTIFICATION_TEMP_TTL_MS),
   });
 
   const toCandidate = (pair: Pair): IdentificationCandidate => ({

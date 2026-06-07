@@ -19,21 +19,44 @@ export async function enrichSpecies(speciesId: string): Promise<void> {
     throw err;
   }
 
-  await db
-    .update(species)
-    .set({
-      description: summary?.extract ?? null,
-      wikipediaUrl: summary?.contentUrl ?? null,
-      wikipediaFetchedAt: new Date(),
-      updatedAt: new Date(),
-    })
-    .where(eq(species.id, speciesId));
+  const now = new Date();
+  // 404 (summary === null) sets only the marker so the cron retry can stop trying.
+  // Success path overwrites description/wikipediaUrl with the fresh values.
+  // Importantly: a later 404 must NOT clobber a previously-populated description.
+  const update = summary
+    ? {
+        description: summary.extract,
+        wikipediaUrl: summary.contentUrl,
+        wikipediaFetchedAt: now,
+        updatedAt: now,
+      }
+    : { wikipediaFetchedAt: now, updatedAt: now };
+
+  await db.update(species).set(update).where(eq(species.id, speciesId));
 }
 
+// Pending enrichment tasks, exposed so tests can deterministically await
+// completion instead of relying on wall-clock sleeps.
+const pending = new Set<Promise<void>>();
+
 export function scheduleEnrichment(speciesId: string): void {
-  queueMicrotask(() => {
-    enrichSpecies(speciesId).catch((err) => {
-      logger.warn({ err, speciesId }, 'wiki.enrich.failed');
+  const task = new Promise<void>((resolve) => {
+    queueMicrotask(() => {
+      enrichSpecies(speciesId)
+        .catch((err) => {
+          logger.warn({ err, speciesId }, 'wiki.enrich.failed');
+        })
+        .finally(() => {
+          pending.delete(task);
+          resolve();
+        });
     });
   });
+  pending.add(task);
+}
+
+export async function flushPendingEnrichments(): Promise<void> {
+  while (pending.size) {
+    await Promise.all(pending);
+  }
 }

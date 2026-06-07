@@ -27,10 +27,14 @@ export class PlantnetTimeoutError extends Error {
 }
 
 export class PlantnetUnavailableError extends Error {
+  readonly status: number;
+  readonly body: string | undefined;
+
   constructor(status: number, body?: string) {
     super(`PlantNet upstream error (status=${status})`);
     this.name = 'PlantnetUnavailableError';
-    Object.assign(this, { status, body });
+    this.status = status;
+    this.body = body;
   }
 }
 
