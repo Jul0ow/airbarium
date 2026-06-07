@@ -23,14 +23,15 @@ function mockFetch(handler: (url: string, init: RequestInit | undefined) => Resp
 
 describe('fetchSummary', () => {
   it('returns extract and content url on 200', async () => {
-    mockFetch(() =>
-      new Response(
-        JSON.stringify({
-          extract: 'Le Lycoris est un genre…',
-          content_urls: { desktop: { page: 'https://fr.wikipedia.org/wiki/Lycoris_radiata' } },
-        }),
-        { status: 200 },
-      ),
+    mockFetch(
+      () =>
+        new Response(
+          JSON.stringify({
+            extract: 'Le Lycoris est un genre…',
+            content_urls: { desktop: { page: 'https://fr.wikipedia.org/wiki/Lycoris_radiata' } },
+          }),
+          { status: 200 },
+        ),
     );
 
     const summary = await fetchSummary('Lycoris radiata');
@@ -56,7 +57,12 @@ describe('fetchSummary', () => {
   });
 
   it('sends User-Agent header and URL-encodes scientific name', async () => {
-    mockFetch(() => new Response(JSON.stringify({ extract: 'x', content_urls: { desktop: { page: 'x' } } }), { status: 200 }));
+    mockFetch(
+      () =>
+        new Response(JSON.stringify({ extract: 'x', content_urls: { desktop: { page: 'x' } } }), {
+          status: 200,
+        }),
+    );
 
     await fetchSummary('Lycoris × albiflora');
 

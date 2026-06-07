@@ -2,8 +2,8 @@ import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { and, eq } from 'drizzle-orm';
 import { plantnetUsage, users } from '@/db/schema';
 import { incrementOrThrow, refund } from '@/services/quota';
-import { uuid7 } from '@/utils/uuid';
 import { AppError } from '@/utils/errors';
+import { uuid7 } from '@/utils/uuid';
 import { setupTestDb, testDb, truncateAll } from '../../helpers/db';
 
 const today = () => new Date().toISOString().slice(0, 10);

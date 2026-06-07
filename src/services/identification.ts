@@ -74,7 +74,8 @@ export async function identifyAndStore(
     throw err;
   }
 
-  if (results.length === 0) {
+  const [topResult, ...altResults] = results;
+  if (!topResult) {
     throw new AppError('NO_MATCH', 'PlantNet returned no candidates', 422);
   }
 
@@ -87,21 +88,25 @@ export async function identifyAndStore(
     contentType: 'image/jpeg',
   });
 
-  const speciesPairs: Array<{
+  type Pair = {
     species: { id: string };
     isNew: boolean;
     result: (typeof results)[number];
-  }> = [];
-  for (const r of results) {
+  };
+  const upsertOne = async (r: (typeof results)[number]): Promise<Pair> => {
     const pair = await upsertFromPlantnet({
       scientificName: r.scientificName,
       commonName: r.commonName,
       family: r.family,
       referencePhotoUrl: r.referencePhotoUrl,
     });
-    speciesPairs.push({ species: pair.species, isNew: pair.isNew, result: r });
     if (pair.isNew) scheduleEnrichment(pair.species.id);
-  }
+    return { species: pair.species, isNew: pair.isNew, result: r };
+  };
+
+  const topPair = await upsertOne(topResult);
+  const altPairs: Pair[] = [];
+  for (const r of altResults) altPairs.push(await upsertOne(r));
 
   await db.insert(identifications).values({
     id: identificationId,
@@ -109,13 +114,13 @@ export async function identifyAndStore(
     photoUrl: key,
     photoStatus: 'temp',
     plantnetRawResponse: raw as never,
-    topMatchSpeciesId: speciesPairs[0]!.species.id,
-    topMatchConfidence: results[0]!.score.toFixed(4),
+    topMatchSpeciesId: topPair.species.id,
+    topMatchConfidence: topResult.score.toFixed(4),
     exifMetadata: buildExifJson(exif) as never,
     expiresAt: new Date(Date.now() + TEMP_TTL_MS),
   });
 
-  const toCandidate = (pair: (typeof speciesPairs)[number]): IdentificationCandidate => ({
+  const toCandidate = (pair: Pair): IdentificationCandidate => ({
     species_id: pair.species.id,
     common_name: pair.result.commonName,
     scientific_name: pair.result.scientificName,
@@ -127,9 +132,9 @@ export async function identifyAndStore(
 
   return {
     id: identificationId,
-    top_match: toCandidate(speciesPairs[0]!),
-    alternatives: speciesPairs.slice(1).map(toCandidate),
+    top_match: toCandidate(topPair),
+    alternatives: altPairs.map(toCandidate),
     confidence_threshold: CONFIDENCE_THRESHOLD,
-    auto_pickable: results[0]!.score >= CONFIDENCE_THRESHOLD,
+    auto_pickable: topResult.score >= CONFIDENCE_THRESHOLD,
   };
 }

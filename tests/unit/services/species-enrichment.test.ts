@@ -2,8 +2,8 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test
 import { eq } from 'drizzle-orm';
 import { species } from '@/db/schema';
 import { __setWikipediaForTests, WikipediaUnavailableError } from '@/lib/wikipedia';
-import { enrichSpecies, scheduleEnrichment } from '@/services/species-enrichment';
 import { upsertFromPlantnet } from '@/services/species';
+import { enrichSpecies, scheduleEnrichment } from '@/services/species-enrichment';
 import { setupTestDb, testDb, truncateAll } from '../../helpers/db';
 
 let restore: () => void;

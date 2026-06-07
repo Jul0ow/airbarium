@@ -1,7 +1,7 @@
 import {
   __setPlantnetForTests,
-  PlantnetUnavailableError,
   type PlantnetResult,
+  PlantnetUnavailableError,
 } from '@/lib/plantnet';
 
 export type MockPlantnetOptions = {
@@ -70,7 +70,7 @@ export function installMockPlantnet(opts: MockPlantnetOptions = {}): () => void 
       },
     });
   }
-  const results = opts.noMatch ? [] : opts.results ?? DEFAULT_RESULTS;
+  const results = opts.noMatch ? [] : (opts.results ?? DEFAULT_RESULTS);
   return __setPlantnetForTests({
     identify: async () => results,
     identifyRaw: async () => ({ raw: { results, ...(opts.raw ?? {}) } as never, results }),

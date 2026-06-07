@@ -62,10 +62,7 @@ function mapResult(r: RawResult): PlantnetResult {
 }
 
 type Impl = {
-  identify: (
-    buffer: Uint8Array,
-    opts?: { timeoutMs?: number },
-  ) => Promise<PlantnetResult[]>;
+  identify: (buffer: Uint8Array, opts?: { timeoutMs?: number }) => Promise<PlantnetResult[]>;
   identifyRaw: (
     buffer: Uint8Array,
     opts?: { timeoutMs?: number },

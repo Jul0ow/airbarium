@@ -1,1 +1,88 @@
-{"query":{"project":"all","images":["8608881133562b69165f8ffd3dbb1553"],"organs":["flower"],"includeRelatedImages":false,"noReject":false,"type":null},"predictedOrgans":[{"image":"8608881133562b69165f8ffd3dbb1553","filename":"Lycoris_Radiata_red_3__1_4.jpg","organ":"flower","score":0.87791}],"language":"fr","preferedReferential":"k-world-flora","bestMatch":"Lycoris radiata (L'Hér.) Herb.","results":[{"score":0.92331,"species":{"scientificNameWithoutAuthor":"Lycoris radiata","scientificNameAuthorship":"(L'Hér.) Herb.","genus":{"scientificNameWithoutAuthor":"Lycoris","scientificNameAuthorship":"","scientificName":"Lycoris"},"family":{"scientificNameWithoutAuthor":"Amaryllidaceae","scientificNameAuthorship":"","scientificName":"Amaryllidaceae"},"commonNames":["Amaryllis du Japon","Higanbana","Lis araignée rouge"],"scientificName":"Lycoris radiata (L'Hér.) Herb."},"gbif":{"id":"7920353"},"powo":{"id":"60455959-2"}},{"score":0.00998,"species":{"scientificNameWithoutAuthor":"Lycoris × albiflora","scientificNameAuthorship":"Koidz.","genus":{"scientificNameWithoutAuthor":"Lycoris","scientificNameAuthorship":"","scientificName":"Lycoris"},"family":{"scientificNameWithoutAuthor":"Amaryllidaceae","scientificNameAuthorship":"","scientificName":"Amaryllidaceae"},"commonNames":[],"scientificName":"Lycoris × albiflora Koidz."},"gbif":{"id":"5326172"},"powo":{"id":"65788-1"}},{"score":0.00619,"species":{"scientificNameWithoutAuthor":"Lycoris aurea","scientificNameAuthorship":"(L'Hér.) Herb.","genus":{"scientificNameWithoutAuthor":"Lycoris","scientificNameAuthorship":"","scientificName":"Lycoris"},"family":{"scientificNameWithoutAuthor":"Amaryllidaceae","scientificNameAuthorship":"","scientificName":"Amaryllidaceae"},"commonNames":[],"scientificName":"Lycoris aurea (L'Hér.) Herb."},"gbif":{"id":"5326154"},"powo":{"id":"60455958-2"}}],"version":"2026-03-20 (7.4)","remainingIdentificationRequests":499}
+{
+  "query": {
+    "project": "all",
+    "images": ["8608881133562b69165f8ffd3dbb1553"],
+    "organs": ["flower"],
+    "includeRelatedImages": false,
+    "noReject": false,
+    "type": null
+  },
+  "predictedOrgans": [
+    {
+      "image": "8608881133562b69165f8ffd3dbb1553",
+      "filename": "Lycoris_Radiata_red_3__1_4.jpg",
+      "organ": "flower",
+      "score": 0.87791
+    }
+  ],
+  "language": "fr",
+  "preferedReferential": "k-world-flora",
+  "bestMatch": "Lycoris radiata (L'Hér.) Herb.",
+  "results": [
+    {
+      "score": 0.92331,
+      "species": {
+        "scientificNameWithoutAuthor": "Lycoris radiata",
+        "scientificNameAuthorship": "(L'Hér.) Herb.",
+        "genus": {
+          "scientificNameWithoutAuthor": "Lycoris",
+          "scientificNameAuthorship": "",
+          "scientificName": "Lycoris"
+        },
+        "family": {
+          "scientificNameWithoutAuthor": "Amaryllidaceae",
+          "scientificNameAuthorship": "",
+          "scientificName": "Amaryllidaceae"
+        },
+        "commonNames": ["Amaryllis du Japon", "Higanbana", "Lis araignée rouge"],
+        "scientificName": "Lycoris radiata (L'Hér.) Herb."
+      },
+      "gbif": { "id": "7920353" },
+      "powo": { "id": "60455959-2" }
+    },
+    {
+      "score": 0.00998,
+      "species": {
+        "scientificNameWithoutAuthor": "Lycoris × albiflora",
+        "scientificNameAuthorship": "Koidz.",
+        "genus": {
+          "scientificNameWithoutAuthor": "Lycoris",
+          "scientificNameAuthorship": "",
+          "scientificName": "Lycoris"
+        },
+        "family": {
+          "scientificNameWithoutAuthor": "Amaryllidaceae",
+          "scientificNameAuthorship": "",
+          "scientificName": "Amaryllidaceae"
+        },
+        "commonNames": [],
+        "scientificName": "Lycoris × albiflora Koidz."
+      },
+      "gbif": { "id": "5326172" },
+      "powo": { "id": "65788-1" }
+    },
+    {
+      "score": 0.00619,
+      "species": {
+        "scientificNameWithoutAuthor": "Lycoris aurea",
+        "scientificNameAuthorship": "(L'Hér.) Herb.",
+        "genus": {
+          "scientificNameWithoutAuthor": "Lycoris",
+          "scientificNameAuthorship": "",
+          "scientificName": "Lycoris"
+        },
+        "family": {
+          "scientificNameWithoutAuthor": "Amaryllidaceae",
+          "scientificNameAuthorship": "",
+          "scientificName": "Amaryllidaceae"
+        },
+        "commonNames": [],
+        "scientificName": "Lycoris aurea (L'Hér.) Herb."
+      },
+      "gbif": { "id": "5326154" },
+      "powo": { "id": "60455958-2" }
+    }
+  ],
+  "version": "2026-03-20 (7.4)",
+  "remainingIdentificationRequests": 499
+}

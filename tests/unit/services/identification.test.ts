@@ -5,12 +5,12 @@ import { __setGarageForTests } from '@/lib/garage';
 import {
   __setPlantnetForTests,
   PlantnetQuotaExhaustedError,
-  PlantnetUnavailableError,
   type PlantnetResult,
+  PlantnetUnavailableError,
 } from '@/lib/plantnet';
 import { __setWikipediaForTests } from '@/lib/wikipedia';
 import { identifyAndStore } from '@/services/identification';
-import { AppError } from '@/utils/errors';
+import type { AppError } from '@/utils/errors';
 import { uuid7 } from '@/utils/uuid';
 import { setupTestDb, testDb, truncateAll } from '../../helpers/db';
 
@@ -116,7 +116,9 @@ describe('identifyAndStore', () => {
   it('returns auto_pickable=false when top score < 0.70', async () => {
     const uid = await createUser();
     stubGarage();
-    stubPlantnet([{ ...sampleResults[0]!, score: 0.26 }, sampleResults[1]!, sampleResults[2]!]);
+    const [top, alt1, alt2] = sampleResults;
+    if (!top || !alt1 || !alt2) throw new Error('unreachable');
+    stubPlantnet([{ ...top, score: 0.26 }, alt1, alt2]);
 
     const out = await identifyAndStore(uid, buffer, {});
 

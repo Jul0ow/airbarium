@@ -1,37 +1,31 @@
 import { z } from 'zod';
 
-const latitude = z
-  .string()
-  .transform((v, ctx) => {
-    const n = Number(v);
-    if (!Number.isFinite(n) || n < -90 || n > 90) {
-      ctx.addIssue({ code: 'custom', message: 'invalid latitude' });
-      return z.NEVER;
-    }
-    return n;
-  });
+const latitude = z.string().transform((v, ctx) => {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < -90 || n > 90) {
+    ctx.addIssue({ code: 'custom', message: 'invalid latitude' });
+    return z.NEVER;
+  }
+  return n;
+});
 
-const longitude = z
-  .string()
-  .transform((v, ctx) => {
-    const n = Number(v);
-    if (!Number.isFinite(n) || n < -180 || n > 180) {
-      ctx.addIssue({ code: 'custom', message: 'invalid longitude' });
-      return z.NEVER;
-    }
-    return n;
-  });
+const longitude = z.string().transform((v, ctx) => {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < -180 || n > 180) {
+    ctx.addIssue({ code: 'custom', message: 'invalid longitude' });
+    return z.NEVER;
+  }
+  return n;
+});
 
-const isoDate = z
-  .string()
-  .transform((v, ctx) => {
-    const d = new Date(v);
-    if (Number.isNaN(d.getTime())) {
-      ctx.addIssue({ code: 'custom', message: 'invalid date_taken' });
-      return z.NEVER;
-    }
-    return d;
-  });
+const isoDate = z.string().transform((v, ctx) => {
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) {
+    ctx.addIssue({ code: 'custom', message: 'invalid date_taken' });
+    return z.NEVER;
+  }
+  return d;
+});
 
 export const ExifFormSchema = z
   .object({
