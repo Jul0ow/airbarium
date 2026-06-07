@@ -30,7 +30,7 @@ afterEach(() => {
 });
 
 function mockFetch(handler: (url: string, init: RequestInit | undefined) => Response | Promise<Response>) {
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString();
     lastInit = { url, init };
     return handler(url, init);
