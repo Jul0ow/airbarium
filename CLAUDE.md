@@ -78,3 +78,7 @@ Required env vars (copy `.env.example`):
 | 6 | Specimens online (POST/GET/PATCH/DELETE) | 1–5 |
 | 7 | Offline sync + retry identify | 6 |
 | 8 | RGPD + cron + observability + Helm | 6, 7 |
+
+## Documentation
+
+- **README à tenir à jour** — à la fin de chaque lot, mettre à jour le `README.md` racine pour refléter ce qui a été livré : nouvelles commandes, variables d'env ajoutées, endpoints exposés, étapes de setup local impactées, statut d'avancement de la roadmap. Pas de PR de lot mergée sans le passage README correspondant.
