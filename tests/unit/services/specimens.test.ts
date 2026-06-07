@@ -236,3 +236,183 @@ describe('service.patch', () => {
     );
   });
 });
+
+async function makeSpecimenAt(
+  userId: string,
+  opts: {
+    collectedAt: Date;
+    identifiedName?: string | null;
+    family?: string | null;
+    speciesId?: string;
+  },
+): Promise<string> {
+  const id = uuid7();
+  await testDb.insert(specimens).values({
+    id,
+    userId,
+    photoUrl: `${userId}/${id}.jpg`,
+    speciesId: opts.speciesId ?? null,
+    identifiedName: opts.identifiedName ?? 'Coquelicot',
+    scientificName: 'Papaver rhoeas',
+    family: opts.family ?? 'Papaveraceae',
+    confidenceScore: '0.9000',
+    identificationSource: 'plantnet_auto',
+    collectedAt: opts.collectedAt,
+  });
+  return id;
+}
+
+describe('service.list', () => {
+  it('returns empty list when user has no specimens', async () => {
+    const uid = await makeUser();
+    const out = await service.list(uid, {
+      limit: 20,
+      sort: 'collected_at_desc',
+    });
+    expect(out.data).toEqual([]);
+    expect(out.next_cursor).toBeNull();
+  });
+
+  it('scopes to the user', async () => {
+    const u1 = await makeUser();
+    const u2 = await makeUser();
+    await makeSpecimen(u1);
+    await makeSpecimen(u2);
+    const out = await service.list(u1, { limit: 20, sort: 'collected_at_desc' });
+    expect(out.data).toHaveLength(1);
+  });
+
+  it('excludes soft-deleted specimens', async () => {
+    const uid = await makeUser();
+    await makeSpecimen(uid);
+    await makeSpecimen(uid, { deleted: true });
+    const out = await service.list(uid, { limit: 20, sort: 'collected_at_desc' });
+    expect(out.data).toHaveLength(1);
+  });
+
+  it('sorts by collected_at DESC and paginates with composite cursor', async () => {
+    const uid = await makeUser();
+    const a = await makeSpecimenAt(uid, { collectedAt: new Date('2026-01-01') });
+    const b = await makeSpecimenAt(uid, { collectedAt: new Date('2026-02-01') });
+    const c = await makeSpecimenAt(uid, { collectedAt: new Date('2026-03-01') });
+
+    const page1 = await service.list(uid, { limit: 2, sort: 'collected_at_desc' });
+    expect(page1.data.map((s) => s.id)).toEqual([c, b]);
+    expect(page1.next_cursor).not.toBeNull();
+
+    const page2 = await service.list(uid, {
+      limit: 2,
+      sort: 'collected_at_desc',
+      cursor: page1.next_cursor ?? undefined,
+    });
+    expect(page2.data.map((s) => s.id)).toEqual([a]);
+    expect(page2.next_cursor).toBeNull();
+  });
+
+  it('uses id as tiebreaker when collected_at is identical', async () => {
+    const uid = await makeUser();
+    const sameDate = new Date('2026-06-01');
+    const a = await makeSpecimenAt(uid, { collectedAt: sameDate });
+    const b = await makeSpecimenAt(uid, { collectedAt: sameDate });
+
+    const page1 = await service.list(uid, { limit: 1, sort: 'collected_at_desc' });
+    expect(page1.data).toHaveLength(1);
+    expect(page1.next_cursor).not.toBeNull();
+
+    const page2 = await service.list(uid, {
+      limit: 1,
+      sort: 'collected_at_desc',
+      cursor: page1.next_cursor ?? undefined,
+    });
+    expect(page2.data).toHaveLength(1);
+    expect(new Set([page1.data[0]?.id, page2.data[0]?.id])).toEqual(new Set([a, b]));
+  });
+
+  it('sorts by created_at_desc', async () => {
+    const uid = await makeUser();
+    const a = await makeSpecimen(uid);
+    await new Promise((r) => setTimeout(r, 5));
+    const b = await makeSpecimen(uid);
+    const out = await service.list(uid, { limit: 20, sort: 'created_at_desc' });
+    expect(out.data.map((s) => s.id)).toEqual([b, a]);
+  });
+
+  it('sorts by name_asc', async () => {
+    const uid = await makeUser();
+    await makeSpecimenAt(uid, { collectedAt: new Date(), identifiedName: 'Zinnia' });
+    await makeSpecimenAt(uid, { collectedAt: new Date(), identifiedName: 'Anémone' });
+    const out = await service.list(uid, { limit: 20, sort: 'name_asc' });
+    expect(out.data.map((s) => s.identified_name)).toEqual(['Anémone', 'Zinnia']);
+  });
+
+  it('filters by q (ILIKE on identified_name)', async () => {
+    const uid = await makeUser();
+    await makeSpecimenAt(uid, { collectedAt: new Date(), identifiedName: 'Coquelicot' });
+    await makeSpecimenAt(uid, { collectedAt: new Date(), identifiedName: 'Pâquerette' });
+    const out = await service.list(uid, {
+      limit: 20,
+      sort: 'collected_at_desc',
+      q: 'queli',
+    });
+    expect(out.data.map((s) => s.identified_name)).toEqual(['Coquelicot']);
+  });
+
+  it('filters by family (exact)', async () => {
+    const uid = await makeUser();
+    await makeSpecimenAt(uid, { collectedAt: new Date(), family: 'Papaveraceae' });
+    await makeSpecimenAt(uid, { collectedAt: new Date(), family: 'Asteraceae' });
+    const out = await service.list(uid, {
+      limit: 20,
+      sort: 'collected_at_desc',
+      family: 'Asteraceae',
+    });
+    expect(out.data.map((s) => s.family)).toEqual(['Asteraceae']);
+  });
+
+  it('filters by date_from / date_to (inclusive)', async () => {
+    const uid = await makeUser();
+    await makeSpecimenAt(uid, { collectedAt: new Date('2026-01-15') });
+    await makeSpecimenAt(uid, { collectedAt: new Date('2026-06-15') });
+    await makeSpecimenAt(uid, { collectedAt: new Date('2026-12-15') });
+    const out = await service.list(uid, {
+      limit: 20,
+      sort: 'collected_at_desc',
+      date_from: new Date('2026-03-01'),
+      date_to: new Date('2026-09-01'),
+    });
+    expect(out.data.map((s) => new Date(s.collected_at).getMonth())).toEqual([5]);
+  });
+
+  it('combines filters in AND', async () => {
+    const uid = await makeUser();
+    await makeSpecimenAt(uid, {
+      collectedAt: new Date('2026-06-15'),
+      family: 'Asteraceae',
+      identifiedName: 'Pâquerette',
+    });
+    await makeSpecimenAt(uid, {
+      collectedAt: new Date('2026-06-15'),
+      family: 'Papaveraceae',
+      identifiedName: 'Coquelicot',
+    });
+    const out = await service.list(uid, {
+      limit: 20,
+      sort: 'collected_at_desc',
+      family: 'Asteraceae',
+      q: 'querette',
+    });
+    expect(out.data).toHaveLength(1);
+    expect(out.data[0]?.identified_name).toBe('Pâquerette');
+  });
+
+  it('throws AppError(INVALID_CURSOR, 400) for malformed cursor', async () => {
+    const uid = await makeUser();
+    try {
+      await service.list(uid, { limit: 20, sort: 'collected_at_desc', cursor: 'not-base64-!' });
+      expect.unreachable();
+    } catch (e) {
+      expect((e as AppError).status).toBe(400);
+      expect((e as AppError).code).toBe('INVALID_CURSOR');
+    }
+  });
+});
