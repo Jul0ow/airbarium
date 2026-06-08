@@ -69,8 +69,24 @@ export function installMockPlantnet(opts: MockPlantnetOptions = {}): () => void 
     });
   }
   const results = opts.noMatch ? [] : (opts.results ?? DEFAULT_RESULTS);
+  // Mirror the real PlantNet response shape so consumers reading the persisted
+  // jsonb (e.g. specimens.create re-walking raw.results[].species.scientificNameWithoutAuthor)
+  // see the same structure they would in production. Tests can override the
+  // whole raw payload via opts.raw.
+  const rawResults = results.map((r) => ({
+    score: r.score,
+    species: {
+      scientificNameWithoutAuthor: r.scientificName,
+      commonNames: r.commonName === null ? [] : [r.commonName],
+      family: { scientificNameWithoutAuthor: r.family },
+    },
+    images: r.referencePhotoUrl === null ? [] : [{ url: { m: r.referencePhotoUrl } }],
+  }));
   return __setPlantnetForTests({
     identify: async () => results,
-    identifyRaw: async () => ({ raw: { results, ...(opts.raw ?? {}) } as never, results }),
+    identifyRaw: async () => ({
+      raw: { results: rawResults, ...(opts.raw ?? {}) } as never,
+      results,
+    }),
   });
 }

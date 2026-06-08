@@ -61,80 +61,29 @@ async function createIdentification(
   opts: { highConfidence?: boolean } = {},
 ) {
   // Default mock returns Lycoris @ 0.9233 (auto-pickable). Override for low.
-  // We also supply a `raw` payload shaped like a real PlantNet response so the
-  // specimens service can re-derive the candidate pool via
-  // `results[].species.scientificNameWithoutAuthor`.
   if (opts.highConfidence === false) {
-    const lowResults = [
-      {
-        scientificName: 'Myriophyllum alterniflorum',
-        commonName: 'Myriophylle',
-        family: 'Haloragaceae',
-        referencePhotoUrl: null,
-        score: 0.26,
-      },
-      {
-        scientificName: 'Acer rubrum',
-        commonName: 'Érable rouge',
-        family: 'Sapindaceae',
-        referencePhotoUrl: null,
-        score: 0.07,
-      },
-    ];
     restores.push(
       installMockPlantnet({
-        results: lowResults,
-        raw: {
-          results: lowResults.map((r) => ({
-            score: r.score,
-            species: {
-              scientificNameWithoutAuthor: r.scientificName,
-              commonNames: r.commonName ? [r.commonName] : [],
-              family: { scientificNameWithoutAuthor: r.family ?? '' },
-            },
-          })),
-        },
+        results: [
+          {
+            scientificName: 'Myriophyllum alterniflorum',
+            commonName: 'Myriophylle',
+            family: 'Haloragaceae',
+            referencePhotoUrl: null,
+            score: 0.26,
+          },
+          {
+            scientificName: 'Acer rubrum',
+            commonName: 'Érable rouge',
+            family: 'Sapindaceae',
+            referencePhotoUrl: null,
+            score: 0.07,
+          },
+        ],
       }),
     );
   } else {
-    const defaultResults = [
-      {
-        scientificName: 'Lycoris radiata',
-        commonName: 'Amaryllis du Japon',
-        family: 'Amaryllidaceae',
-        referencePhotoUrl: 'https://bs.plantnet.org/m/x.jpg',
-        score: 0.9233,
-      },
-      {
-        scientificName: 'Lycoris × albiflora',
-        commonName: null,
-        family: 'Amaryllidaceae',
-        referencePhotoUrl: null,
-        score: 0.0099,
-      },
-      {
-        scientificName: 'Lycoris aurea',
-        commonName: null,
-        family: 'Amaryllidaceae',
-        referencePhotoUrl: null,
-        score: 0.0061,
-      },
-    ];
-    restores.push(
-      installMockPlantnet({
-        results: defaultResults,
-        raw: {
-          results: defaultResults.map((r) => ({
-            score: r.score,
-            species: {
-              scientificNameWithoutAuthor: r.scientificName,
-              commonNames: r.commonName ? [r.commonName] : [],
-              family: { scientificNameWithoutAuthor: r.family ?? '' },
-            },
-          })),
-        },
-      }),
-    );
+    restores.push(installMockPlantnet());
   }
 
   const form = new FormData();
