@@ -37,7 +37,7 @@ Health check: `curl http://localhost:3000/v1/health` returns `{ "status": "ok", 
 
 ## Status
 
-Lots 1 (Bootstrap), 2 (DB & migrations), 3 (Auth), 4 (Storage), and 5 (Identifications) — Hono skeleton, `/v1/health` with DB probe, Drizzle schemas for users/species/identifications/specimens/plantnet_usage/rate_limit, Better Auth wiring with email/password + mailer + bearer plugin, `GET /v1/me`, `PATCH /v1/me`, Garage S3 adapter with presigned URLs, `PUT/DELETE /v1/me/avatar`, `POST /v1/identifications` + `GET /v1/species/:id` with PlantNet + Wikipedia integration and per-user daily quota, CI with Postgres + Garage services. See the 8-lot roadmap in [`CLAUDE.md`](CLAUDE.md).
+Lots 1 (Bootstrap), 2 (DB & migrations), 3 (Auth), 4 (Storage), 5 (Identifications), and 6 (Specimens online) — Hono skeleton, `/v1/health` with DB probe, Drizzle schemas for users/species/identifications/specimens/plantnet_usage/rate_limit, Better Auth wiring with email/password + mailer + bearer plugin, `GET /v1/me`, `PATCH /v1/me`, Garage S3 adapter with presigned URLs, `PUT/DELETE /v1/me/avatar`, `POST /v1/identifications` + `GET /v1/species/:id` with PlantNet + Wikipedia integration and per-user daily quota, `POST/GET/PATCH/DELETE /v1/specimens` + `GET /v1/specimens/stats` with idempotent UUIDv7, threshold-validated promotion, cursor-paginated lists and filters, soft delete, CI with Postgres + Garage services. See the 8-lot roadmap in [`CLAUDE.md`](CLAUDE.md).
 
 ## Lot 3 — Auth quickstart
 
@@ -188,3 +188,81 @@ curl -sS http://localhost:3000/v1/species/<species_id> -H "Authorization: Bearer
 | `502` | `PLANTNET_UNAVAILABLE` | PlantNet 5xx/timeout/429 global — refund quota |
 
 `GET /v1/species/:id` renvoie `404 NOT_FOUND` si l'ID est inconnu.
+
+## Lot 6 — Specimens quickstart
+
+L'API specimens transforme une identification temporaire en entrée permanente dans la bibliothèque de l'utilisateur. Flux online uniquement (le mobile fournit `identification_id` + `chosen_species_id`). Lot 7 ajoutera la branche offline-sync.
+
+### Workflow type
+
+1. `POST /v1/identifications` (multipart) → réponse contient `id`, `top_match.species_id`, `alternatives[]`, `auto_pickable`.
+2. Le mobile génère un UUIDv7 local pour le specimen.
+3. `POST /v1/specimens` avec `{ id, identification_id, chosen_species_id, identification_source, collected_at, ... }`.
+
+`identification_source` est strictement dérivé du seuil 0.70 :
+- `top.confidence >= 0.70` ⇒ doit être `plantnet_auto`, et `chosen_species_id` doit être le top match.
+- `top.confidence < 0.70` ⇒ doit être `plantnet_picked` (le mobile a fait choisir l'utilisateur parmi top + 2 alternatives).
+
+### Endpoints
+
+| Méthode | Path | Notes |
+|---|---|---|
+| POST | `/v1/specimens` | Idempotent sur `id`. 201 = créé, 200 = no-op (replay même user), 409 = id existant pour un autre user. |
+| GET | `/v1/specimens` | Cursor-based : `?cursor&limit=20&sort&q&family&date_from&date_to`. Filtres combinables en AND. |
+| GET | `/v1/specimens/stats` | `{ total, distinct_species }` sur les specimens actifs. |
+| GET | `/v1/specimens/:id` | Specimen complet, `photo_url` pré-signé 1h. 404 cross-user. |
+| PATCH | `/v1/specimens/:id` | Body `{ user_notes?, location_label? }`. `null` = clear. Au moins un champ requis. |
+| DELETE | `/v1/specimens/:id` | Soft delete (204). La photo Garage reste jusqu'au cron Lot 8 (purge 30j). |
+
+### Exemple
+
+```bash
+TOKEN=...
+IDENT_ID=...      # from POST /v1/identifications
+SPECIES_ID=...    # from top_match.species_id
+SID=$(bun -e 'import { uuid7 } from "./src/utils/uuid.ts"; console.log(uuid7())')
+
+curl -X POST http://localhost:3000/v1/specimens \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d "{
+    \"id\": \"$SID\",
+    \"identification_id\": \"$IDENT_ID\",
+    \"chosen_species_id\": \"$SPECIES_ID\",
+    \"identification_source\": \"plantnet_auto\",
+    \"collected_at\": \"2026-06-07T10:00:00Z\",
+    \"location_label\": \"Jardin du Luxembourg\"
+  }"
+
+# Replay même body → 200 (idempotent)
+# GET /v1/specimens → liste
+# GET /v1/specimens/stats → {total:1, distinct_species:1}
+# PATCH user_notes → 200
+# DELETE → 204, GET /:id → 404
+```
+
+### Pagination cursor
+
+Le `next_cursor` est un base64url opaque encodant `{ k, v, id }` (colonne de tri, valeur, tie-breaker). Le client le passe verbatim au prochain appel via `?cursor=...`. `null` = pas de page suivante.
+
+Sort options : `collected_at_desc` (défaut), `created_at_desc`, `name_asc`.
+
+### Codes d'erreur
+
+| Status | Code | Cause |
+|---|---|---|
+| `400` | (Zod) | Body invalide (champ manquant, type, longueur, `identification_source=none` refusé) |
+| `400` | `INVALID_CHOICE` | `chosen_species_id` ne fait pas partie des candidats PlantNet de cette identification |
+| `400` | `THRESHOLD_VIOLATED` | Règle du seuil 0.70 violée (mauvaise combinaison confidence/source/choice) |
+| `400` | `INVALID_CURSOR` | Cursor malformé (pas base64url ou JSON invalide ou clé `k` inconnue) |
+| `404` | `SPECIMEN_NOT_FOUND` | Specimen inexistant, cross-user, ou soft-deleted |
+| `404` | `IDENTIFICATION_NOT_FOUND` | Identification inexistante ou cross-user |
+| `409` | `ID_CONFLICT` | `id` existe déjà pour un autre user |
+| `409` | `ALREADY_PROMOTED` | Identification déjà consommée par un specimen précédent |
+| `410` | `IDENTIFICATION_EXPIRED` | Identification créée il y a plus de 24h (purge Lot 8 à venir) |
+
+### Notes d'implémentation
+
+- **Pas de copy S3** : `specimens.photo_url` réutilise la clé Garage de l'identification (`<user_id>/<identification_id>.jpg`). On flip uniquement `identifications.photo_status='promoted'` + `promoted_at=now()` dans la même transaction que l'INSERT specimen.
+- **Snapshot dénormalisé** : `identified_name`, `scientific_name`, `family`, `confidence_score` sont figés au moment du POST. Une mise à jour future de `species.description` (Wikipedia) ne change pas ce qui est stocké sur le specimen.
+- **Idempotence stricte** : un replay POST avec le même `id` ignore TOUT le reste du body et renvoie le specimen existant (200, no-op).
+- **Race condition** : si 2 POSTs concurrents tentent de promouvoir la même identification, Postgres serialise l'UPDATE conditionnel `WHERE photo_status='temp'` — le perdant voit 0 row et lève 409 `ALREADY_PROMOTED`, sa transaction (INSERT specimen inclus) est rollback.
