@@ -242,7 +242,7 @@ describe('POST /v1/specimens', () => {
     expect(body.error.code).toBe('ID_CONFLICT');
   });
 
-  it('returns 400 OFFLINE_SOURCE_NOT_ALLOWED for source=none (rejected at schema)', async () => {
+  it('returns 400 OFFLINE_SOURCE_NOT_ALLOWED for source=none', async () => {
     const app = buildTestApp();
     const u = await makeUser('sp-d');
     const res = await app.request('/v1/specimens', {
@@ -257,6 +257,8 @@ describe('POST /v1/specimens', () => {
       }),
     });
     expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe('OFFLINE_SOURCE_NOT_ALLOWED');
   });
 
   it('returns 400 THRESHOLD_VIOLATED when high confidence + plantnet_picked', async () => {
@@ -372,6 +374,38 @@ describe('GET /v1/specimens/:id', () => {
     const app = buildTestApp();
     const res = await app.request(`/v1/specimens/${uuid7()}`);
     expect(res.status).toBe(401);
+  });
+
+  it('returns 404 for malformed id on GET/PATCH/DELETE', async () => {
+    const app = buildTestApp();
+    const u = await makeUser('g-malformed');
+    const headers = bearerHeaders(u.sessionToken);
+    const jsonHeaders = { ...headers, 'Content-Type': 'application/json' };
+
+    const getRes = await app.request('/v1/specimens/not-a-uuid', { headers });
+    expect(getRes.status).toBe(404);
+    expect(((await getRes.json()) as { error: { code: string } }).error.code).toBe(
+      'SPECIMEN_NOT_FOUND',
+    );
+
+    const patchRes = await app.request('/v1/specimens/not-a-uuid', {
+      method: 'PATCH',
+      headers: jsonHeaders,
+      body: JSON.stringify({ user_notes: 'x' }),
+    });
+    expect(patchRes.status).toBe(404);
+    expect(((await patchRes.json()) as { error: { code: string } }).error.code).toBe(
+      'SPECIMEN_NOT_FOUND',
+    );
+
+    const delRes = await app.request('/v1/specimens/not-a-uuid', {
+      method: 'DELETE',
+      headers,
+    });
+    expect(delRes.status).toBe(404);
+    expect(((await delRes.json()) as { error: { code: string } }).error.code).toBe(
+      'SPECIMEN_NOT_FOUND',
+    );
   });
 
   it('returns 404 for cross-user access', async () => {
@@ -514,7 +548,7 @@ describe('PATCH /v1/specimens/:id', () => {
     expect(body.user_notes).toBe('updated');
   });
 
-  it('rejects empty body with 400', async () => {
+  it('rejects empty body with 400 INVALID_PATCH', async () => {
     const app = buildTestApp();
     const u = await makeUser('patch-b');
     const res = await app.request(`/v1/specimens/${uuid7()}`, {
@@ -523,6 +557,8 @@ describe('PATCH /v1/specimens/:id', () => {
       body: JSON.stringify({}),
     });
     expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe('INVALID_PATCH');
   });
 });
 
@@ -557,13 +593,13 @@ describe('DELETE /v1/specimens/:id', () => {
     });
     expect(get.status).toBe(404);
 
-    // Idempotent
+    // Idempotent: the row still exists (soft delete) and is still owned by the
+    // user, so service.softDelete short-circuits on the deleted_at != null
+    // branch without touching the row again, and the route returns 204.
     const del2 = await app.request(`/v1/specimens/${sid}`, {
       method: 'DELETE',
       headers: bearerHeaders(u.sessionToken),
     });
-    // already soft-deleted — service returns void without error, but the row is
-    // still scoped to the user, so we expect 204 again.
     expect(del2.status).toBe(204);
   });
 });

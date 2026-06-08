@@ -1,4 +1,4 @@
-export type CursorKey = 'collected_at' | 'created_at' | 'identified_name';
+export type CursorKey = 'collected_at' | 'created_at' | 'identified_name' | 'identified_name_null';
 
 export type Cursor = {
   k: CursorKey;
@@ -6,7 +6,7 @@ export type Cursor = {
   id: string;
 };
 
-const KEYS: CursorKey[] = ['collected_at', 'created_at', 'identified_name'];
+const KEYS: CursorKey[] = ['collected_at', 'created_at', 'identified_name', 'identified_name_null'];
 
 export function encodeCursor(cursor: Cursor): string {
   const json = JSON.stringify(cursor);
@@ -15,12 +15,7 @@ export function encodeCursor(cursor: Cursor): string {
 
 export function decodeCursor(value: string | null | undefined): Cursor | null {
   if (!value) return null;
-  let json: string;
-  try {
-    json = Buffer.from(value, 'base64url').toString('utf8');
-  } catch {
-    return null;
-  }
+  const json = Buffer.from(value, 'base64url').toString('utf8');
   if (!json) return null;
   let parsed: unknown;
   try {

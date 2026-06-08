@@ -275,7 +275,7 @@ async function makeSpecimenAt(
     userId,
     photoUrl: `${userId}/${id}.jpg`,
     speciesId: opts.speciesId ?? null,
-    identifiedName: opts.identifiedName ?? 'Coquelicot',
+    identifiedName: 'identifiedName' in opts ? (opts.identifiedName ?? null) : 'Coquelicot',
     scientificName: 'Papaver rhoeas',
     family: opts.family ?? 'Papaveraceae',
     confidenceScore: '0.9000',
@@ -378,6 +378,45 @@ describe('service.list', () => {
       q: 'queli',
     });
     expect(out.data.map((s) => s.identified_name)).toEqual(['Coquelicot']);
+  });
+
+  it('escapes LIKE wildcards in q (% and _ are literal)', async () => {
+    const uid = await makeUser();
+    await makeSpecimenAt(uid, { collectedAt: new Date(), identifiedName: 'Coquelicot' });
+    await makeSpecimenAt(uid, { collectedAt: new Date(), identifiedName: '50% off' });
+    await makeSpecimenAt(uid, { collectedAt: new Date(), identifiedName: 'AxB' });
+
+    // Without escaping, `q=%` would match every non-null row (Postgres treats
+    // % as "any sequence"). With escaping, only the literal "%"-containing row matches.
+    const pct = await service.list(uid, { limit: 20, sort: 'collected_at_desc', q: '%' });
+    expect(pct.data.map((s) => s.identified_name)).toEqual(['50% off']);
+
+    // Without escaping, `_` would be a single-char wildcard and match "AxB".
+    const underscore = await service.list(uid, {
+      limit: 20,
+      sort: 'collected_at_desc',
+      q: 'A_B',
+    });
+    expect(underscore.data).toEqual([]);
+  });
+
+  it('paginates name_asc across NULL identified_name rows', async () => {
+    const uid = await makeUser();
+    await makeSpecimenAt(uid, { collectedAt: new Date(), identifiedName: 'Anémone' });
+    await makeSpecimenAt(uid, { collectedAt: new Date(), identifiedName: 'Zinnia' });
+    await makeSpecimenAt(uid, { collectedAt: new Date(), identifiedName: null });
+    await makeSpecimenAt(uid, { collectedAt: new Date(), identifiedName: null });
+
+    const page1 = await service.list(uid, { limit: 2, sort: 'name_asc' });
+    expect(page1.data.map((s) => s.identified_name)).toEqual(['Anémone', 'Zinnia']);
+    expect(page1.next_cursor).not.toBeNull();
+
+    const page2 = await service.list(uid, {
+      limit: 2,
+      sort: 'name_asc',
+      cursor: page1.next_cursor ?? undefined,
+    });
+    expect(page2.data.map((s) => s.identified_name)).toEqual([null, null]);
   });
 
   it('filters by family (exact)', async () => {
