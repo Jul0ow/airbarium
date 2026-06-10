@@ -623,7 +623,11 @@ export async function retryIdentify(userId: string, id: string): Promise<Specime
   try {
     photo = await getObject({ bucket: SPECIMENS_BUCKET, key: s.photoUrl });
   } catch (err) {
-    await refund(userId);
+    try {
+      await refund(userId);
+    } catch (refundErr) {
+      logger.error({ userId, err: refundErr }, 'specimens.retry.refund_failed');
+    }
     logger.error({ userId, id, key: s.photoUrl, err }, 'specimens.retry.photo_missing');
     throw new AppError('PHOTO_NOT_FOUND', `photo for specimen ${id} is missing in storage`, 500);
   }
@@ -632,7 +636,11 @@ export async function retryIdentify(userId: string, id: string): Promise<Specime
   try {
     ({ results } = await identifyRaw(photo));
   } catch (err) {
-    await refund(userId);
+    try {
+      await refund(userId);
+    } catch (refundErr) {
+      logger.error({ userId, err: refundErr }, 'specimens.retry.refund_failed');
+    }
     if (err instanceof PlantnetQuotaExhaustedError) {
       logger.error({ userId }, 'plantnet.global_quota_exhausted');
     }
@@ -641,7 +649,8 @@ export async function retryIdentify(userId: string, id: string): Promise<Specime
 
   const top = results[0];
   if (!top) {
-    // no_match is a legitimate 200 — quota stays consumed (Lot 5 convention).
+    // no_match: PlantNet saw the photo (legitimate usage), so quota stays
+    // consumed (Lot 5 convention). Surfaced as 422 to the caller.
     throw new AppError('NO_MATCH', 'PlantNet returned no candidates', 422);
   }
 

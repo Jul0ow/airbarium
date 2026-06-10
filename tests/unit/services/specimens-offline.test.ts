@@ -257,6 +257,20 @@ describe('service.retryIdentify', () => {
     expect(await usageCount(uid)).toBe(0);
   });
 
+  it('502 on PlantNet timeout, quota refunded', async () => {
+    const uid = await makeUser();
+    restores.push(installMockPlantnet({ fail: 'timeout' }));
+    const sid = await makeNoneSpecimen(uid);
+    try {
+      await service.retryIdentify(uid, sid);
+      expect.unreachable();
+    } catch (e) {
+      expect((e as AppError).status).toBe(502);
+      expect((e as AppError).code).toBe('PLANTNET_UNAVAILABLE');
+    }
+    expect(await usageCount(uid)).toBe(0);
+  });
+
   it('422 NO_MATCH on empty results, quota NOT refunded', async () => {
     const uid = await makeUser();
     restores.push(installMockPlantnet({ noMatch: true }));
