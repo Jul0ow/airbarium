@@ -530,9 +530,11 @@ async function createOffline(userId: string, input: CreateOfflineInput): Promise
 }
 
 // Best-effort: never throws. Returns the updated specimen if PlantNet matched,
-// otherwise the original (source still 'none'). Quota is refunded only on
-// errors ≠ 200 PlantNet (timeout / 5xx / global quota) — never on no_match,
-// which is a legitimate 200 response (Lot 5 convention, MVP §8.1).
+// otherwise the original (source still 'none'). Quota is refunded on every
+// failure path except no_match (which is a legitimate 200 response — Lot 5
+// convention, MVP §8.1). Unexpected errors (e.g. DB write failure after the
+// specimen is already persisted as 'none') are caught, logged at error level,
+// and the specimen is returned unchanged so the POST can still return 201.
 async function tryIdentifyOffline(
   userId: string,
   specimen: Specimen,
@@ -545,9 +547,35 @@ async function tryIdentifyOffline(
     return specimen;
   }
 
-  let results: Awaited<ReturnType<typeof identifyRaw>>['results'];
   try {
+    let results: Awaited<ReturnType<typeof identifyRaw>>['results'];
     ({ results } = await identifyRaw(photo));
+
+    const top = results[0];
+    if (!top) return specimen; // no_match: 200 legit, no refund, stays 'none'
+
+    const pair = await upsertFromPlantnet({
+      scientificName: top.scientificName,
+      commonName: top.commonName,
+      family: top.family,
+      referencePhotoUrl: top.referencePhotoUrl,
+    });
+    if (pair.isNew) scheduleEnrichment(pair.species.id);
+
+    const [updated] = await db
+      .update(specimens)
+      .set({
+        speciesId: pair.species.id,
+        identifiedName: top.commonName,
+        scientificName: top.scientificName,
+        family: top.family,
+        confidenceScore: top.score.toFixed(4),
+        identificationSource: 'plantnet_auto',
+        updatedAt: new Date(),
+      })
+      .where(eq(specimens.id, specimen.id))
+      .returning();
+    return updated ?? specimen;
   } catch (err) {
     if (
       err instanceof PlantnetTimeoutError ||
@@ -560,34 +588,13 @@ async function tryIdentifyOffline(
       }
       return specimen;
     }
-    throw err; // unexpected, surface it
+    // Unexpected (DB write, programming error) AFTER the specimen is already
+    // persisted as 'none'. Don't fail the sync POST — the specimen is saved and
+    // retryable via /:id/identify. Refund the quota we consumed, log loudly.
+    await refund(userId);
+    logger.error({ userId, specimenId: specimen.id, err }, 'specimens.offline.identify_failed');
+    return specimen;
   }
-
-  const top = results[0];
-  if (!top) return specimen; // no_match: 200 legit, no refund, stays 'none'
-
-  const pair = await upsertFromPlantnet({
-    scientificName: top.scientificName,
-    commonName: top.commonName,
-    family: top.family,
-    referencePhotoUrl: top.referencePhotoUrl,
-  });
-  if (pair.isNew) scheduleEnrichment(pair.species.id);
-
-  const [updated] = await db
-    .update(specimens)
-    .set({
-      speciesId: pair.species.id,
-      identifiedName: top.commonName,
-      scientificName: top.scientificName,
-      family: top.family,
-      confidenceScore: top.score.toFixed(4),
-      identificationSource: 'plantnet_auto',
-      updatedAt: new Date(),
-    })
-    .where(eq(specimens.id, specimen.id))
-    .returning();
-  return updated ?? specimen;
 }
 
 // postgres.js surfaces Postgres errors as objects with `.code` and
