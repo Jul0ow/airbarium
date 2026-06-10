@@ -582,7 +582,11 @@ async function tryIdentifyOffline(
       err instanceof PlantnetUnavailableError ||
       err instanceof PlantnetQuotaExhaustedError
     ) {
-      await refund(userId);
+      try {
+        await refund(userId);
+      } catch (refundErr) {
+        logger.error({ userId, err: refundErr }, 'specimens.offline.refund_failed');
+      }
       if (err instanceof PlantnetQuotaExhaustedError) {
         logger.error({ userId }, 'plantnet.global_quota_exhausted');
       }
@@ -591,7 +595,11 @@ async function tryIdentifyOffline(
     // Unexpected (DB write, programming error) AFTER the specimen is already
     // persisted as 'none'. Don't fail the sync POST — the specimen is saved and
     // retryable via /:id/identify. Refund the quota we consumed, log loudly.
-    await refund(userId);
+    try {
+      await refund(userId);
+    } catch (refundErr) {
+      logger.error({ userId, err: refundErr }, 'specimens.offline.refund_failed');
+    }
     logger.error({ userId, specimenId: specimen.id, err }, 'specimens.offline.identify_failed');
     return specimen;
   }
