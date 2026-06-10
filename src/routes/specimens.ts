@@ -1,5 +1,7 @@
 import { zValidator } from '@hono/zod-validator';
 import { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
+import type { Context } from 'hono';
 import type { AppEnv } from '@/app-env';
 import { authMiddleware, requireUser } from '@/middleware/auth';
 import {
@@ -7,8 +9,10 @@ import {
   ListSpecimensQuerySchema,
   PatchSpecimenSchema,
 } from '@/schemas/specimens';
+import { CreateSpecimenOfflineFormSchema } from '@/schemas/specimens-offline';
 import * as service from '@/services/specimens';
 import { AppError, ValidationError } from '@/utils/errors';
+import { JPEG_BODY_LIMIT_BYTES, validateJpeg } from '@/utils/jpeg';
 
 const route = new Hono<AppEnv>();
 
@@ -34,21 +38,65 @@ const issuesPayload = (
   issues: issues.map((i) => ({ path: i.path, code: i.code, message: i.message })),
 });
 
-const createValidator = zValidator('json', CreateSpecimenSchema, (result) => {
-  if (result.success) return;
-  const sourceIssue = result.error.issues.find(
-    (i) => i.path.length === 1 && i.path[0] === 'identification_source',
-  );
-  if (sourceIssue) {
-    throw new AppError(
-      'OFFLINE_SOURCE_NOT_ALLOWED',
-      'identification_source must be plantnet_auto or plantnet_picked',
-      400,
-      issuesPayload(result.error.issues),
-    );
+async function handleJsonCreate(c: Context<AppEnv>, userId: string) {
+  let raw: unknown;
+  try {
+    raw = await c.req.json();
+  } catch {
+    throw new ValidationError('Invalid JSON body');
   }
-  throw new ValidationError('Invalid request body', issuesPayload(result.error.issues));
-});
+  const result = CreateSpecimenSchema.safeParse(raw);
+  if (!result.success) {
+    const sourceIssue = result.error.issues.find(
+      (i) => i.path.length === 1 && i.path[0] === 'identification_source',
+    );
+    if (sourceIssue) {
+      throw new AppError(
+        'OFFLINE_SOURCE_NOT_ALLOWED',
+        'identification_source must be plantnet_auto or plantnet_picked',
+        400,
+        issuesPayload(result.error.issues),
+      );
+    }
+    throw new ValidationError('Invalid request body', issuesPayload(result.error.issues));
+  }
+  return service.create(userId, result.data);
+}
+
+async function handleMultipartCreate(c: Context<AppEnv>, userId: string) {
+  const form = await c.req.parseBody();
+  const photo = form.photo;
+  if (!(photo instanceof File)) {
+    throw new AppError('MISSING_FIELD', 'photo field is required', 400);
+  }
+  if (photo.type !== 'image/jpeg') {
+    throw new AppError('INVALID_CONTENT_TYPE', 'photo must be image/jpeg', 400, {
+      received: photo.type,
+    });
+  }
+  const buffer = new Uint8Array(await photo.arrayBuffer());
+  validateJpeg(buffer);
+
+  const fields: Record<string, string> = {};
+  for (const [k, v] of Object.entries(form)) {
+    if (k !== 'photo' && typeof v === 'string') fields[k] = v;
+  }
+  const result = CreateSpecimenOfflineFormSchema.safeParse(fields);
+  if (!result.success) {
+    throw new ValidationError('Invalid request body', issuesPayload(result.error.issues));
+  }
+
+  return service.create(userId, {
+    id: result.data.id,
+    photo: buffer,
+    identification_source: 'none',
+    collected_at: result.data.collected_at,
+    lat: result.data.lat,
+    lng: result.data.lng,
+    location_label: result.data.location_label,
+    user_notes: result.data.user_notes,
+  });
+}
 
 const patchValidator = zValidator('json', PatchSpecimenSchema, (result) => {
   if (result.success) return;
@@ -64,12 +112,33 @@ const patchValidator = zValidator('json', PatchSpecimenSchema, (result) => {
   throw new ValidationError('Invalid request body', issuesPayload(result.error.issues));
 });
 
-route.post('/specimens', authMiddleware(), createValidator, async (c) => {
-  const user = requireUser(c);
-  const body = c.req.valid('json');
-  const out = await service.create(user.id, body);
-  return c.json(out.specimen, out.wasCreated ? 201 : 200);
-});
+route.post(
+  '/specimens',
+  bodyLimit({
+    maxSize: JPEG_BODY_LIMIT_BYTES,
+    onError: () => {
+      throw new AppError('PAYLOAD_TOO_LARGE', 'File exceeds upload body limit', 413);
+    },
+  }),
+  authMiddleware(),
+  async (c) => {
+    const user = requireUser(c);
+    const ct = (c.req.header('content-type') ?? '').toLowerCase();
+    let out: Awaited<ReturnType<typeof service.create>>;
+    if (ct.startsWith('application/json')) {
+      out = await handleJsonCreate(c, user.id);
+    } else if (ct.startsWith('multipart/form-data')) {
+      out = await handleMultipartCreate(c, user.id);
+    } else {
+      throw new AppError(
+        'UNSUPPORTED_MEDIA_TYPE',
+        'Expected application/json or multipart/form-data',
+        415,
+      );
+    }
+    return c.json(out.specimen, out.wasCreated ? 201 : 200);
+  },
+);
 
 route.get(
   '/specimens',
@@ -107,6 +176,12 @@ route.delete('/specimens/:id', authMiddleware(), async (c) => {
   const id = parseSpecimenIdOr404(c.req.param('id'));
   await service.softDelete(user.id, id);
   return c.body(null, 204);
+});
+
+route.post('/specimens/:id/identify', authMiddleware(), async (c) => {
+  const user = requireUser(c);
+  const id = parseSpecimenIdOr404(c.req.param('id'));
+  return c.json(await service.retryIdentify(user.id, id), 200);
 });
 
 export default route;
