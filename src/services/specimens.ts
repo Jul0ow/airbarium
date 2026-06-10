@@ -2,8 +2,18 @@ import { and, asc, desc, eq, gt, gte, ilike, inArray, isNull, lt, lte, or, sql }
 import { CONFIDENCE_THRESHOLD, SPECIMENS_BUCKET } from '@/config/constants';
 import { db } from '@/db/client';
 import { identifications, type Specimen, species as speciesTable, specimens } from '@/db/schema';
-import { getPresignedUrl } from '@/lib/garage';
-import type { PlantnetRawResponse } from '@/lib/plantnet';
+import { getPresignedUrl, putObject } from '@/lib/garage';
+import {
+  identifyRaw,
+  PlantnetQuotaExhaustedError,
+  type PlantnetRawResponse,
+  PlantnetTimeoutError,
+  PlantnetUnavailableError,
+} from '@/lib/plantnet';
+import { logger } from '@/middleware/logger';
+import { incrementOrThrow, refund } from '@/services/quota';
+import { upsertFromPlantnet } from '@/services/species';
+import { scheduleEnrichment } from '@/services/species-enrichment';
 import { type Cursor, decodeCursor, encodeCursor } from '@/utils/cursor';
 import { AppError } from '@/utils/errors';
 
@@ -263,7 +273,7 @@ export async function list(userId: string, params: ListParams): Promise<ListResu
   return { data, next_cursor: nextCursor };
 }
 
-export type CreateInput = {
+export type CreateOnlineInput = {
   id: string;
   identification_id: string;
   chosen_species_id: string;
@@ -274,6 +284,19 @@ export type CreateInput = {
   location_label?: string | undefined;
   user_notes?: string | undefined;
 };
+
+export type CreateOfflineInput = {
+  id: string;
+  photo: Uint8Array;
+  identification_source: 'none';
+  collected_at: Date;
+  lat?: number | undefined;
+  lng?: number | undefined;
+  location_label?: string | undefined;
+  user_notes?: string | undefined;
+};
+
+export type CreateInput = CreateOnlineInput | CreateOfflineInput;
 
 export type CreateResult = {
   specimen: SpecimenResponse;
@@ -291,13 +314,17 @@ function pickRawResults(raw: PlantnetRawResponse): RawResult[] {
 }
 
 export async function create(userId: string, input: CreateInput): Promise<CreateResult> {
-  // 1. Idempotence check
+  // 1. Idempotence check (common to online + offline)
   const [existing] = await db.select().from(specimens).where(eq(specimens.id, input.id));
   if (existing) {
     if (existing.userId !== userId) {
       throw new AppError('ID_CONFLICT', `specimen id ${input.id} belongs to another user`, 409);
     }
     return { specimen: await toSpecimenResponse(existing), wasCreated: false };
+  }
+
+  if (!('identification_id' in input)) {
+    return createOffline(userId, input);
   }
 
   // 2. Load identification
@@ -461,6 +488,106 @@ export async function create(userId: string, input: CreateInput): Promise<Create
   }
 
   return { specimen: await toSpecimenResponse(inserted), wasCreated: true };
+}
+
+async function createOffline(userId: string, input: CreateOfflineInput): Promise<CreateResult> {
+  const key = `${userId}/${input.id}.jpg`;
+  await putObject({ bucket: SPECIMENS_BUCKET, key, body: input.photo, contentType: 'image/jpeg' });
+
+  let inserted: Specimen;
+  try {
+    const [row] = await db
+      .insert(specimens)
+      .values({
+        id: input.id,
+        userId,
+        photoUrl: key,
+        identificationSource: 'none',
+        lat: input.lat === undefined ? null : input.lat.toFixed(6),
+        lng: input.lng === undefined ? null : input.lng.toFixed(6),
+        locationLabel: input.location_label ?? null,
+        userNotes: input.user_notes ?? null,
+        collectedAt: input.collected_at,
+      })
+      .returning();
+    if (!row) throw new AppError('INVARIANT', 'offline specimen insert returned no row', 500);
+    inserted = row;
+  } catch (err: unknown) {
+    if (isUniquePkViolation(err)) {
+      const [existing] = await db.select().from(specimens).where(eq(specimens.id, input.id));
+      if (existing) {
+        if (existing.userId !== userId) {
+          throw new AppError('ID_CONFLICT', `specimen id ${input.id} belongs to another user`, 409);
+        }
+        return { specimen: await toSpecimenResponse(existing), wasCreated: false };
+      }
+    }
+    throw err;
+  }
+
+  const final = await tryIdentifyOffline(userId, inserted, input.photo);
+  return { specimen: await toSpecimenResponse(final), wasCreated: true };
+}
+
+// Best-effort: never throws. Returns the updated specimen if PlantNet matched,
+// otherwise the original (source still 'none'). Quota is refunded only on
+// errors ≠ 200 PlantNet (timeout / 5xx / global quota) — never on no_match,
+// which is a legitimate 200 response (Lot 5 convention, MVP §8.1).
+async function tryIdentifyOffline(
+  userId: string,
+  specimen: Specimen,
+  photo: Uint8Array,
+): Promise<Specimen> {
+  try {
+    await incrementOrThrow(userId);
+  } catch {
+    // QUOTA_EXCEEDED already refunds itself inside incrementOrThrow.
+    return specimen;
+  }
+
+  let results: Awaited<ReturnType<typeof identifyRaw>>['results'];
+  try {
+    ({ results } = await identifyRaw(photo));
+  } catch (err) {
+    if (
+      err instanceof PlantnetTimeoutError ||
+      err instanceof PlantnetUnavailableError ||
+      err instanceof PlantnetQuotaExhaustedError
+    ) {
+      await refund(userId);
+      if (err instanceof PlantnetQuotaExhaustedError) {
+        logger.error({ userId }, 'plantnet.global_quota_exhausted');
+      }
+      return specimen;
+    }
+    throw err; // unexpected, surface it
+  }
+
+  const top = results[0];
+  if (!top) return specimen; // no_match: 200 legit, no refund, stays 'none'
+
+  const pair = await upsertFromPlantnet({
+    scientificName: top.scientificName,
+    commonName: top.commonName,
+    family: top.family,
+    referencePhotoUrl: top.referencePhotoUrl,
+  });
+  if (pair.isNew) scheduleEnrichment(pair.species.id);
+
+  const [updated] = await db
+    .update(specimens)
+    .set({
+      speciesId: pair.species.id,
+      identifiedName: top.commonName,
+      scientificName: top.scientificName,
+      family: top.family,
+      confidenceScore: top.score.toFixed(4),
+      identificationSource: 'plantnet_auto',
+      updatedAt: new Date(),
+    })
+    .where(eq(specimens.id, specimen.id))
+    .returning();
+  return updated ?? specimen;
 }
 
 // postgres.js surfaces Postgres errors as objects with `.code` and
