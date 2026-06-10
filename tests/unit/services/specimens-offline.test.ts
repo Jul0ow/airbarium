@@ -153,3 +153,144 @@ describe('service.create offline — idempotence', () => {
     }
   });
 });
+
+async function makeNoneSpecimen(userId: string): Promise<string> {
+  const id = uuid7();
+  await testDb.insert(specimens).values({
+    id,
+    userId,
+    photoUrl: `${userId}/${id}.jpg`,
+    identificationSource: 'none',
+    collectedAt: new Date(),
+  });
+  return id;
+}
+
+describe('service.retryIdentify', () => {
+  it('identifies a none specimen → plantnet_auto, snapshot filled', async () => {
+    const uid = await makeUser();
+    restores.push(installMockPlantnet());
+    const sid = await makeNoneSpecimen(uid);
+    const out = await service.retryIdentify(uid, sid);
+    expect(out.identification_source).toBe('plantnet_auto');
+    expect(out.scientific_name).toBe('Lycoris radiata');
+    expect(out.species_id).not.toBeNull();
+  });
+
+  it('404 when specimen does not exist', async () => {
+    const uid = await makeUser();
+    restores.push(installMockPlantnet());
+    try {
+      await service.retryIdentify(uid, uuid7());
+      expect.unreachable();
+    } catch (e) {
+      expect((e as AppError).status).toBe(404);
+      expect((e as AppError).code).toBe('SPECIMEN_NOT_FOUND');
+    }
+  });
+
+  it('409 ALREADY_IDENTIFIED when source is plantnet_auto', async () => {
+    const uid = await makeUser();
+    restores.push(installMockPlantnet());
+    const id = uuid7();
+    await testDb.insert(specimens).values({
+      id,
+      userId: uid,
+      photoUrl: `${uid}/${id}.jpg`,
+      identificationSource: 'plantnet_auto',
+      collectedAt: new Date(),
+    });
+    try {
+      await service.retryIdentify(uid, id);
+      expect.unreachable();
+    } catch (e) {
+      expect((e as AppError).status).toBe(409);
+      expect((e as AppError).code).toBe('ALREADY_IDENTIFIED');
+    }
+  });
+
+  it('409 ALREADY_IDENTIFIED when source is plantnet_picked', async () => {
+    const uid = await makeUser();
+    restores.push(installMockPlantnet());
+    const id = uuid7();
+    await testDb.insert(specimens).values({
+      id,
+      userId: uid,
+      photoUrl: `${uid}/${id}.jpg`,
+      identificationSource: 'plantnet_picked',
+      collectedAt: new Date(),
+    });
+    try {
+      await service.retryIdentify(uid, id);
+      expect.unreachable();
+    } catch (e) {
+      expect((e as AppError).code).toBe('ALREADY_IDENTIFIED');
+    }
+  });
+
+  it('429 when quota already exhausted (no refund beyond self-refund)', async () => {
+    const uid = await makeUser();
+    const today = new Date().toISOString().slice(0, 10);
+    await testDb.insert(plantnetUsage).values({ userId: uid, day: today, count: DAILY_PLANTNET_QUOTA });
+    restores.push(installMockPlantnet());
+    const sid = await makeNoneSpecimen(uid);
+    try {
+      await service.retryIdentify(uid, sid);
+      expect.unreachable();
+    } catch (e) {
+      expect((e as AppError).status).toBe(429);
+    }
+    expect(await usageCount(uid)).toBe(DAILY_PLANTNET_QUOTA);
+  });
+
+  it('502 on PlantNet unavailable, quota refunded', async () => {
+    const uid = await makeUser();
+    restores.push(installMockPlantnet({ fail: 'unavailable' }));
+    const sid = await makeNoneSpecimen(uid);
+    try {
+      await service.retryIdentify(uid, sid);
+      expect.unreachable();
+    } catch (e) {
+      expect((e as AppError).status).toBe(502);
+      expect((e as AppError).code).toBe('PLANTNET_UNAVAILABLE');
+    }
+    expect(await usageCount(uid)).toBe(0);
+  });
+
+  it('422 NO_MATCH on empty results, quota NOT refunded', async () => {
+    const uid = await makeUser();
+    restores.push(installMockPlantnet({ noMatch: true }));
+    const sid = await makeNoneSpecimen(uid);
+    try {
+      await service.retryIdentify(uid, sid);
+      expect.unreachable();
+    } catch (e) {
+      expect((e as AppError).status).toBe(422);
+      expect((e as AppError).code).toBe('NO_MATCH');
+    }
+    expect(await usageCount(uid)).toBe(1);
+  });
+
+  it('500 PHOTO_NOT_FOUND when garage has no object, quota refunded', async () => {
+    const uid = await makeUser();
+    restores.push(
+      __setGarageForTests({
+        getObject: async () => {
+          const err = new Error('missing');
+          err.name = 'NoSuchKey';
+          throw err;
+        },
+      }),
+    );
+    restores.push(installMockPlantnet());
+    const sid = await makeNoneSpecimen(uid);
+    try {
+      await service.retryIdentify(uid, sid);
+      expect.unreachable();
+    } catch (e) {
+      expect((e as AppError).status).toBe(500);
+      expect((e as AppError).code).toBe('PHOTO_NOT_FOUND');
+    }
+    expect(await usageCount(uid)).toBe(0);
+  });
+});

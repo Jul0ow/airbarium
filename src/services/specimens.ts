@@ -2,7 +2,7 @@ import { and, asc, desc, eq, gt, gte, ilike, inArray, isNull, lt, lte, or, sql }
 import { CONFIDENCE_THRESHOLD, SPECIMENS_BUCKET } from '@/config/constants';
 import { db } from '@/db/client';
 import { identifications, type Specimen, species as speciesTable, specimens } from '@/db/schema';
-import { getPresignedUrl, putObject } from '@/lib/garage';
+import { getObject, getPresignedUrl, putObject } from '@/lib/garage';
 import {
   identifyRaw,
   PlantnetQuotaExhaustedError,
@@ -603,6 +603,86 @@ async function tryIdentifyOffline(
     logger.error({ userId, specimenId: specimen.id, err }, 'specimens.offline.identify_failed');
     return specimen;
   }
+}
+
+export async function retryIdentify(userId: string, id: string): Promise<SpecimenResponse> {
+  const [s] = await db
+    .select()
+    .from(specimens)
+    .where(and(eq(specimens.id, id), eq(specimens.userId, userId), isNull(specimens.deletedAt)));
+  if (!s) {
+    throw new AppError('SPECIMEN_NOT_FOUND', `specimen ${id} not found`, 404);
+  }
+  if (s.identificationSource !== 'none') {
+    throw new AppError('ALREADY_IDENTIFIED', `specimen ${id} is already identified`, 409);
+  }
+
+  await incrementOrThrow(userId); // 429 QUOTA_EXCEEDED propagates
+
+  let photo: Uint8Array;
+  try {
+    photo = await getObject({ bucket: SPECIMENS_BUCKET, key: s.photoUrl });
+  } catch (err) {
+    await refund(userId);
+    logger.error({ userId, id, key: s.photoUrl, err }, 'specimens.retry.photo_missing');
+    throw new AppError('PHOTO_NOT_FOUND', `photo for specimen ${id} is missing in storage`, 500);
+  }
+
+  let results: Awaited<ReturnType<typeof identifyRaw>>['results'];
+  try {
+    ({ results } = await identifyRaw(photo));
+  } catch (err) {
+    await refund(userId);
+    if (err instanceof PlantnetQuotaExhaustedError) {
+      logger.error({ userId }, 'plantnet.global_quota_exhausted');
+    }
+    throw new AppError('PLANTNET_UNAVAILABLE', 'PlantNet upstream unavailable', 502);
+  }
+
+  const top = results[0];
+  if (!top) {
+    // no_match is a legitimate 200 — quota stays consumed (Lot 5 convention).
+    throw new AppError('NO_MATCH', 'PlantNet returned no candidates', 422);
+  }
+
+  const pair = await upsertFromPlantnet({
+    scientificName: top.scientificName,
+    commonName: top.commonName,
+    family: top.family,
+    referencePhotoUrl: top.referencePhotoUrl,
+  });
+  if (pair.isNew) scheduleEnrichment(pair.species.id);
+
+  const [updated] = await db
+    .update(specimens)
+    .set({
+      speciesId: pair.species.id,
+      identifiedName: top.commonName,
+      scientificName: top.scientificName,
+      family: top.family,
+      confidenceScore: top.score.toFixed(4),
+      identificationSource: 'plantnet_auto',
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(specimens.id, id),
+        eq(specimens.userId, userId),
+        eq(specimens.identificationSource, 'none'),
+      ),
+    )
+    .returning();
+
+  if (!updated) {
+    // A concurrent retry won the race and already identified this specimen.
+    const [current] = await db
+      .select()
+      .from(specimens)
+      .where(and(eq(specimens.id, id), eq(specimens.userId, userId), isNull(specimens.deletedAt)));
+    if (!current) throw new AppError('SPECIMEN_NOT_FOUND', `specimen ${id} not found`, 404);
+    return toSpecimenResponse(current);
+  }
+  return toSpecimenResponse(updated);
 }
 
 // postgres.js surfaces Postgres errors as objects with `.code` and
