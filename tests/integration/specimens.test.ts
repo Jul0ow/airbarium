@@ -670,8 +670,12 @@ describe('POST /v1/specimens — offline sync (multipart)', () => {
       form.append('photo', tinyJpeg(), 'flower.jpg');
       return app.request('/v1/specimens', { method: 'POST', headers: bearerHeaders(u.sessionToken), body: form });
     };
-    expect((await mk()).status).toBe(201);
-    expect((await mk()).status).toBe(200);
+    const first = await mk();
+    expect(first.status).toBe(201);
+    const second = await mk();
+    expect(second.status).toBe(200);
+    const body = (await second.json()) as { id: string };
+    expect(body.id).toBe(sid);
   });
 
   it('400 when identification_source is not none in multipart', async () => {
@@ -684,6 +688,8 @@ describe('POST /v1/specimens — offline sync (multipart)', () => {
     form.append('photo', tinyJpeg(), 'flower.jpg');
     const res = await app.request('/v1/specimens', { method: 'POST', headers: bearerHeaders(u.sessionToken), body: form });
     expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe('VALIDATION');
   });
 
   it('400 MISSING_FIELD when photo is absent', async () => {
@@ -764,6 +770,8 @@ describe('POST /v1/specimens/:id/identify', () => {
     restores.push(installMockPlantnet());
     const res = await app.request(`/v1/specimens/${sid}/identify`, { method: 'POST', headers: bearerHeaders(u.sessionToken) });
     expect(res.status).toBe(429);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe('QUOTA_EXCEEDED');
   });
 
   it('502 and refunds quota when PlantNet is unavailable', async () => {
@@ -777,6 +785,7 @@ describe('POST /v1/specimens/:id/identify', () => {
       .select({ count: plantnetUsage.count })
       .from(plantnetUsage)
       .where(eq(plantnetUsage.userId, u.userId));
-    expect(usage?.count ?? 0).toBe(0);
+    expect(usage).toBeDefined();
+    expect(usage?.count).toBe(0);
   });
 });
