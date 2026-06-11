@@ -1,4 +1,19 @@
-import { and, asc, desc, eq, gt, gte, ilike, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  gte,
+  ilike,
+  inArray,
+  isNull,
+  lt,
+  lte,
+  or,
+  type SQL,
+  sql,
+} from 'drizzle-orm';
 import { CONFIDENCE_THRESHOLD, SPECIMENS_BUCKET } from '@/config/constants';
 import { db } from '@/db/client';
 import { identifications, type Specimen, species as speciesTable, specimens } from '@/db/schema';
@@ -7,6 +22,7 @@ import {
   identifyRaw,
   PlantnetQuotaExhaustedError,
   type PlantnetRawResponse,
+  type PlantnetResult,
   PlantnetTimeoutError,
   PlantnetUnavailableError,
 } from '@/lib/plantnet';
@@ -316,12 +332,8 @@ function pickRawResults(raw: PlantnetRawResponse): RawResult[] {
 export async function create(userId: string, input: CreateInput): Promise<CreateResult> {
   // 1. Idempotence check (common to online + offline)
   const [existing] = await db.select().from(specimens).where(eq(specimens.id, input.id));
-  if (existing) {
-    if (existing.userId !== userId) {
-      throw new AppError('ID_CONFLICT', `specimen id ${input.id} belongs to another user`, 409);
-    }
-    return { specimen: await toSpecimenResponse(existing), wasCreated: false };
-  }
+  const replay = await idempotentReplay(existing, userId, input.id);
+  if (replay) return replay;
 
   if (!('identification_id' in input)) {
     return createOffline(userId, input);
@@ -475,15 +487,8 @@ export async function create(userId: string, input: CreateInput): Promise<Create
       return row;
     });
   } catch (err: unknown) {
-    if (isUniquePkViolation(err)) {
-      const [existing2] = await db.select().from(specimens).where(eq(specimens.id, input.id));
-      if (existing2) {
-        if (existing2.userId !== userId) {
-          throw new AppError('ID_CONFLICT', `specimen id ${input.id} belongs to another user`, 409);
-        }
-        return { specimen: await toSpecimenResponse(existing2), wasCreated: false };
-      }
-    }
+    const recovered = await recoverFromPkViolation(err, userId, input.id);
+    if (recovered) return recovered;
     throw err;
   }
 
@@ -513,15 +518,8 @@ async function createOffline(userId: string, input: CreateOfflineInput): Promise
     if (!row) throw new AppError('INVARIANT', 'offline specimen insert returned no row', 500);
     inserted = row;
   } catch (err: unknown) {
-    if (isUniquePkViolation(err)) {
-      const [existing] = await db.select().from(specimens).where(eq(specimens.id, input.id));
-      if (existing) {
-        if (existing.userId !== userId) {
-          throw new AppError('ID_CONFLICT', `specimen id ${input.id} belongs to another user`, 409);
-        }
-        return { specimen: await toSpecimenResponse(existing), wasCreated: false };
-      }
-    }
+    const recovered = await recoverFromPkViolation(err, userId, input.id);
+    if (recovered) return recovered;
     throw err;
   }
 
@@ -553,33 +551,11 @@ async function tryIdentifyOffline(
     const top = results[0];
     if (!top) return specimen; // no_match: 200 legit, no refund, stays 'none'
 
-    const pair = await upsertFromPlantnet({
-      scientificName: top.scientificName,
-      commonName: top.commonName,
-      family: top.family,
-      referencePhotoUrl: top.referencePhotoUrl,
-    });
-    if (pair.isNew) scheduleEnrichment(pair.species.id);
-
-    const [updated] = await db
-      .update(specimens)
-      .set({
-        speciesId: pair.species.id,
-        identifiedName: top.commonName,
-        scientificName: top.scientificName,
-        family: top.family,
-        confidenceScore: top.score.toFixed(4),
-        identificationSource: 'plantnet_auto',
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(specimens.id, specimen.id),
-          eq(specimens.identificationSource, 'none'),
-          isNull(specimens.deletedAt),
-        ),
-      )
-      .returning();
+    const updated = await applyTopMatch(top, [
+      eq(specimens.id, specimen.id),
+      eq(specimens.identificationSource, 'none'),
+      isNull(specimens.deletedAt),
+    ]);
     return updated ?? specimen;
   } catch (err) {
     if (
@@ -659,6 +635,35 @@ export async function retryIdentify(userId: string, id: string): Promise<Specime
     throw new AppError('NO_MATCH', 'PlantNet returned no candidates', 422);
   }
 
+  const updated = await applyTopMatch(top, [
+    eq(specimens.id, id),
+    eq(specimens.userId, userId),
+    eq(specimens.identificationSource, 'none'),
+    isNull(specimens.deletedAt),
+  ]);
+
+  if (!updated) {
+    // The guarded UPDATE matched no row: either a concurrent retry already
+    // identified this specimen, or it was soft-deleted between the initial
+    // SELECT and the UPDATE. Re-SELECT the live row and return it; if it's
+    // gone (deleted), surface 404.
+    const [current] = await db
+      .select()
+      .from(specimens)
+      .where(and(eq(specimens.id, id), eq(specimens.userId, userId), isNull(specimens.deletedAt)));
+    if (!current) throw new AppError('SPECIMEN_NOT_FOUND', `specimen ${id} not found`, 404);
+    return toSpecimenResponse(current);
+  }
+  return toSpecimenResponse(updated);
+}
+
+// Promotes a specimen to `plantnet_auto` from a PlantNet top match: upserts the
+// species, schedules best-effort enrichment for newly-created species, then runs
+// the guarded snapshot UPDATE. `guard` must pin the specimen id together with
+// the `identification_source = 'none'` / not-soft-deleted invariants so a
+// concurrent identify or soft-delete can't double-apply. Returns the updated
+// row, or undefined when the guard matched nothing.
+async function applyTopMatch(top: PlantnetResult, guard: SQL[]): Promise<Specimen | undefined> {
   const pair = await upsertFromPlantnet({
     scientificName: top.scientificName,
     commonName: top.commonName,
@@ -678,29 +683,39 @@ export async function retryIdentify(userId: string, id: string): Promise<Specime
       identificationSource: 'plantnet_auto',
       updatedAt: new Date(),
     })
-    .where(
-      and(
-        eq(specimens.id, id),
-        eq(specimens.userId, userId),
-        eq(specimens.identificationSource, 'none'),
-        isNull(specimens.deletedAt),
-      ),
-    )
+    .where(and(...guard))
     .returning();
+  return updated;
+}
 
-  if (!updated) {
-    // The guarded UPDATE matched no row: either a concurrent retry already
-    // identified this specimen, or it was soft-deleted between the initial
-    // SELECT and the UPDATE. Re-SELECT the live row and return it; if it's
-    // gone (deleted), surface 404.
-    const [current] = await db
-      .select()
-      .from(specimens)
-      .where(and(eq(specimens.id, id), eq(specimens.userId, userId), isNull(specimens.deletedAt)));
-    if (!current) throw new AppError('SPECIMEN_NOT_FOUND', `specimen ${id} not found`, 404);
-    return toSpecimenResponse(current);
+// Idempotent replay for the client-generated specimen id: returns the existing
+// specimen as a no-op CreateResult (200) when it belongs to this user, throws
+// ID_CONFLICT when it belongs to another, or null when there is no row to
+// replay (caller should proceed with the insert).
+async function idempotentReplay(
+  existing: Specimen | undefined,
+  userId: string,
+  id: string,
+): Promise<CreateResult | null> {
+  if (!existing) return null;
+  if (existing.userId !== userId) {
+    throw new AppError('ID_CONFLICT', `specimen id ${id} belongs to another user`, 409);
   }
-  return toSpecimenResponse(updated);
+  return { specimen: await toSpecimenResponse(existing), wasCreated: false };
+}
+
+// Recovers from the PK unique-violation the idempotence SELECT's TOCTOU window
+// can let through: re-runs the idempotent SELECT and replays it. Returns null
+// when the error isn't our specimens PK violation, signalling the caller to
+// rethrow.
+async function recoverFromPkViolation(
+  err: unknown,
+  userId: string,
+  id: string,
+): Promise<CreateResult | null> {
+  if (!isUniquePkViolation(err)) return null;
+  const [existing] = await db.select().from(specimens).where(eq(specimens.id, id));
+  return idempotentReplay(existing, userId, id);
 }
 
 // postgres.js surfaces Postgres errors as objects with `.code` and
