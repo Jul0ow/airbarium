@@ -79,7 +79,7 @@ async function handleMultipartCreate(c: Context<AppEnv>, userId: string) {
 
   const fields: Record<string, string> = {};
   for (const [k, v] of Object.entries(form)) {
-    if (k !== 'photo' && typeof v === 'string') fields[k] = v;
+    if (k !== 'photo' && typeof v === 'string' && v !== '') fields[k] = v;
   }
   const result = CreateSpecimenOfflineFormSchema.safeParse(fields);
   if (!result.success) {

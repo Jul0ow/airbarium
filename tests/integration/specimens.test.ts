@@ -732,6 +732,38 @@ describe('POST /v1/specimens — offline sync (multipart)', () => {
     });
     expect(res.status).toBe(415);
   });
+
+  it('treats empty-string optional fields as absent (lat/lng null, no 400)', async () => {
+    const app = buildTestApp();
+    const u = await makeUser('off-empty');
+    restores.push(installMockPlantnet());
+    const sid = uuid7();
+    createdKeys.push({ bucket: TEST_SPECIMENS_BUCKET, key: `${u.userId}/${sid}.jpg` });
+
+    const form = new FormData();
+    form.append('id', sid);
+    form.append('identification_source', 'none');
+    form.append('collected_at', '2026-06-11T10:00:00Z');
+    form.append('lat', '');
+    form.append('lng', '');
+    form.append('location_label', '');
+    form.append('photo', tinyJpeg(), 'flower.jpg');
+
+    const res = await app.request('/v1/specimens', {
+      method: 'POST',
+      headers: bearerHeaders(u.sessionToken),
+      body: form,
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as {
+      lat: number | null;
+      lng: number | null;
+      location_label: string | null;
+    };
+    expect(body.lat).toBeNull();
+    expect(body.lng).toBeNull();
+    expect(body.location_label).toBeNull();
+  });
 });
 
 describe('POST /v1/specimens/:id/identify', () => {
