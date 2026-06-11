@@ -1,9 +1,35 @@
-import { and, asc, desc, eq, gt, gte, ilike, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  gte,
+  ilike,
+  inArray,
+  isNull,
+  lt,
+  lte,
+  or,
+  type SQL,
+  sql,
+} from 'drizzle-orm';
 import { CONFIDENCE_THRESHOLD, SPECIMENS_BUCKET } from '@/config/constants';
 import { db } from '@/db/client';
 import { identifications, type Specimen, species as speciesTable, specimens } from '@/db/schema';
-import { getPresignedUrl } from '@/lib/garage';
-import type { PlantnetRawResponse } from '@/lib/plantnet';
+import { getObject, getPresignedUrl, putObject } from '@/lib/garage';
+import {
+  identifyRaw,
+  PlantnetQuotaExhaustedError,
+  type PlantnetRawResponse,
+  type PlantnetResult,
+  PlantnetTimeoutError,
+  PlantnetUnavailableError,
+} from '@/lib/plantnet';
+import { logger } from '@/middleware/logger';
+import { incrementOrThrow, refund } from '@/services/quota';
+import { upsertFromPlantnet } from '@/services/species';
+import { scheduleEnrichment } from '@/services/species-enrichment';
 import { type Cursor, decodeCursor, encodeCursor } from '@/utils/cursor';
 import { AppError } from '@/utils/errors';
 
@@ -263,7 +289,7 @@ export async function list(userId: string, params: ListParams): Promise<ListResu
   return { data, next_cursor: nextCursor };
 }
 
-export type CreateInput = {
+export type CreateOnlineInput = {
   id: string;
   identification_id: string;
   chosen_species_id: string;
@@ -274,6 +300,19 @@ export type CreateInput = {
   location_label?: string | undefined;
   user_notes?: string | undefined;
 };
+
+export type CreateOfflineInput = {
+  id: string;
+  photo: Uint8Array;
+  identification_source: 'none';
+  collected_at: Date;
+  lat?: number | undefined;
+  lng?: number | undefined;
+  location_label?: string | undefined;
+  user_notes?: string | undefined;
+};
+
+export type CreateInput = CreateOnlineInput | CreateOfflineInput;
 
 export type CreateResult = {
   specimen: SpecimenResponse;
@@ -291,13 +330,13 @@ function pickRawResults(raw: PlantnetRawResponse): RawResult[] {
 }
 
 export async function create(userId: string, input: CreateInput): Promise<CreateResult> {
-  // 1. Idempotence check
+  // 1. Idempotence check (common to online + offline)
   const [existing] = await db.select().from(specimens).where(eq(specimens.id, input.id));
-  if (existing) {
-    if (existing.userId !== userId) {
-      throw new AppError('ID_CONFLICT', `specimen id ${input.id} belongs to another user`, 409);
-    }
-    return { specimen: await toSpecimenResponse(existing), wasCreated: false };
+  const replay = await idempotentReplay(existing, userId, input.id);
+  if (replay) return replay;
+
+  if (!('identification_id' in input)) {
+    return createOffline(userId, input);
   }
 
   // 2. Load identification
@@ -448,19 +487,235 @@ export async function create(userId: string, input: CreateInput): Promise<Create
       return row;
     });
   } catch (err: unknown) {
-    if (isUniquePkViolation(err)) {
-      const [existing2] = await db.select().from(specimens).where(eq(specimens.id, input.id));
-      if (existing2) {
-        if (existing2.userId !== userId) {
-          throw new AppError('ID_CONFLICT', `specimen id ${input.id} belongs to another user`, 409);
-        }
-        return { specimen: await toSpecimenResponse(existing2), wasCreated: false };
-      }
-    }
+    const recovered = await recoverFromPkViolation(err, userId, input.id);
+    if (recovered) return recovered;
     throw err;
   }
 
   return { specimen: await toSpecimenResponse(inserted), wasCreated: true };
+}
+
+async function createOffline(userId: string, input: CreateOfflineInput): Promise<CreateResult> {
+  const key = `${userId}/${input.id}.jpg`;
+  await putObject({ bucket: SPECIMENS_BUCKET, key, body: input.photo, contentType: 'image/jpeg' });
+
+  let inserted: Specimen;
+  try {
+    const [row] = await db
+      .insert(specimens)
+      .values({
+        id: input.id,
+        userId,
+        photoUrl: key,
+        identificationSource: 'none',
+        lat: input.lat === undefined ? null : input.lat.toFixed(6),
+        lng: input.lng === undefined ? null : input.lng.toFixed(6),
+        locationLabel: input.location_label ?? null,
+        userNotes: input.user_notes ?? null,
+        collectedAt: input.collected_at,
+      })
+      .returning();
+    if (!row) throw new AppError('INVARIANT', 'offline specimen insert returned no row', 500);
+    inserted = row;
+  } catch (err: unknown) {
+    const recovered = await recoverFromPkViolation(err, userId, input.id);
+    if (recovered) return recovered;
+    throw err;
+  }
+
+  const final = await tryIdentifyOffline(userId, inserted, input.photo);
+  return { specimen: await toSpecimenResponse(final), wasCreated: true };
+}
+
+// Best-effort: never throws. Returns the updated specimen if PlantNet matched,
+// otherwise the original (source still 'none'). Quota is refunded on every
+// failure path except no_match (which is a legitimate 200 response — Lot 5
+// convention, MVP §8.1). Unexpected errors (e.g. DB write failure after the
+// specimen is already persisted as 'none') are caught, logged at error level,
+// and the specimen is returned unchanged so the POST can still return 201.
+async function tryIdentifyOffline(
+  userId: string,
+  specimen: Specimen,
+  photo: Uint8Array,
+): Promise<Specimen> {
+  try {
+    await incrementOrThrow(userId);
+  } catch {
+    // QUOTA_EXCEEDED already refunds itself inside incrementOrThrow.
+    return specimen;
+  }
+
+  try {
+    const { results } = await identifyRaw(photo);
+
+    const top = results[0];
+    if (!top) return specimen; // no_match: 200 legit, no refund, stays 'none'
+
+    const updated = await applyTopMatch(top, [
+      eq(specimens.id, specimen.id),
+      eq(specimens.identificationSource, 'none'),
+      isNull(specimens.deletedAt),
+    ]);
+    return updated ?? specimen;
+  } catch (err) {
+    if (
+      err instanceof PlantnetTimeoutError ||
+      err instanceof PlantnetUnavailableError ||
+      err instanceof PlantnetQuotaExhaustedError
+    ) {
+      try {
+        await refund(userId);
+      } catch (refundErr) {
+        logger.error({ userId, err: refundErr }, 'specimens.offline.refund_failed');
+      }
+      if (err instanceof PlantnetQuotaExhaustedError) {
+        logger.error({ userId }, 'plantnet.global_quota_exhausted');
+      }
+      return specimen;
+    }
+    // Unexpected (DB write, programming error) AFTER the specimen is already
+    // persisted as 'none'. Don't fail the sync POST — the specimen is saved and
+    // retryable via /:id/identify. Refund the quota we consumed, log loudly.
+    try {
+      await refund(userId);
+    } catch (refundErr) {
+      logger.error({ userId, err: refundErr }, 'specimens.offline.refund_failed');
+    }
+    logger.error({ userId, specimenId: specimen.id, err }, 'specimens.offline.identify_failed');
+    return specimen;
+  }
+}
+
+export async function retryIdentify(userId: string, id: string): Promise<SpecimenResponse> {
+  const [s] = await db
+    .select()
+    .from(specimens)
+    .where(and(eq(specimens.id, id), eq(specimens.userId, userId), isNull(specimens.deletedAt)));
+  if (!s) {
+    throw new AppError('SPECIMEN_NOT_FOUND', `specimen ${id} not found`, 404);
+  }
+  if (s.identificationSource !== 'none') {
+    throw new AppError('ALREADY_IDENTIFIED', `specimen ${id} is already identified`, 409);
+  }
+
+  await incrementOrThrow(userId); // 429 QUOTA_EXCEEDED propagates
+
+  let photo: Uint8Array;
+  try {
+    photo = await getObject({ bucket: SPECIMENS_BUCKET, key: s.photoUrl });
+  } catch (err) {
+    try {
+      await refund(userId);
+    } catch (refundErr) {
+      logger.error({ userId, err: refundErr }, 'specimens.retry.refund_failed');
+    }
+    logger.error({ userId, id, key: s.photoUrl, err }, 'specimens.retry.photo_missing');
+    throw new AppError('PHOTO_NOT_FOUND', `photo for specimen ${id} is missing in storage`, 500);
+  }
+
+  let results: Awaited<ReturnType<typeof identifyRaw>>['results'];
+  try {
+    ({ results } = await identifyRaw(photo));
+  } catch (err) {
+    try {
+      await refund(userId);
+    } catch (refundErr) {
+      logger.error({ userId, err: refundErr }, 'specimens.retry.refund_failed');
+    }
+    if (err instanceof PlantnetQuotaExhaustedError) {
+      logger.error({ userId }, 'plantnet.global_quota_exhausted');
+    }
+    throw new AppError('PLANTNET_UNAVAILABLE', 'PlantNet upstream unavailable', 502);
+  }
+
+  const top = results[0];
+  if (!top) {
+    // no_match: PlantNet saw the photo (legitimate usage), so quota stays
+    // consumed (Lot 5 convention). Surfaced as 422 to the caller.
+    throw new AppError('NO_MATCH', 'PlantNet returned no candidates', 422);
+  }
+
+  const updated = await applyTopMatch(top, [
+    eq(specimens.id, id),
+    eq(specimens.userId, userId),
+    eq(specimens.identificationSource, 'none'),
+    isNull(specimens.deletedAt),
+  ]);
+
+  if (!updated) {
+    // The guarded UPDATE matched no row: either a concurrent retry already
+    // identified this specimen, or it was soft-deleted between the initial
+    // SELECT and the UPDATE. Re-SELECT the live row and return it; if it's
+    // gone (deleted), surface 404.
+    const [current] = await db
+      .select()
+      .from(specimens)
+      .where(and(eq(specimens.id, id), eq(specimens.userId, userId), isNull(specimens.deletedAt)));
+    if (!current) throw new AppError('SPECIMEN_NOT_FOUND', `specimen ${id} not found`, 404);
+    return toSpecimenResponse(current);
+  }
+  return toSpecimenResponse(updated);
+}
+
+// Promotes a specimen to `plantnet_auto` from a PlantNet top match: upserts the
+// species, schedules best-effort enrichment for newly-created species, then runs
+// the guarded snapshot UPDATE. `guard` must pin the specimen id together with
+// the `identification_source = 'none'` / not-soft-deleted invariants so a
+// concurrent identify or soft-delete can't double-apply. Returns the updated
+// row, or undefined when the guard matched nothing.
+async function applyTopMatch(top: PlantnetResult, guard: SQL[]): Promise<Specimen | undefined> {
+  const pair = await upsertFromPlantnet({
+    scientificName: top.scientificName,
+    commonName: top.commonName,
+    family: top.family,
+    referencePhotoUrl: top.referencePhotoUrl,
+  });
+  if (pair.isNew) scheduleEnrichment(pair.species.id);
+
+  const [updated] = await db
+    .update(specimens)
+    .set({
+      speciesId: pair.species.id,
+      identifiedName: top.commonName,
+      scientificName: top.scientificName,
+      family: top.family,
+      confidenceScore: top.score.toFixed(4),
+      identificationSource: 'plantnet_auto',
+      updatedAt: new Date(),
+    })
+    .where(and(...guard))
+    .returning();
+  return updated;
+}
+
+// Idempotent replay for the client-generated specimen id: returns the existing
+// specimen as a no-op CreateResult (200) when it belongs to this user, throws
+// ID_CONFLICT when it belongs to another, or null when there is no row to
+// replay (caller should proceed with the insert).
+async function idempotentReplay(
+  existing: Specimen | undefined,
+  userId: string,
+  id: string,
+): Promise<CreateResult | null> {
+  if (!existing) return null;
+  if (existing.userId !== userId) {
+    throw new AppError('ID_CONFLICT', `specimen id ${id} belongs to another user`, 409);
+  }
+  return { specimen: await toSpecimenResponse(existing), wasCreated: false };
+}
+
+// Recovers from the PK unique-violation the idempotence SELECT's TOCTOU window
+// can let through: re-runs the idempotent SELECT and replays it. Returns null
+// when the error isn't our specimens PK violation, signalling the caller to
+// rethrow.
+async function recoverFromPkViolation(
+  err: unknown,
+  userId: string,
+  id: string,
+): Promise<CreateResult | null> {
+  if (!isUniquePkViolation(err)) return null;
+  const [existing] = await db.select().from(specimens).where(eq(specimens.id, id));
+  return idempotentReplay(existing, userId, id);
 }
 
 // postgres.js surfaces Postgres errors as objects with `.code` and

@@ -22,6 +22,11 @@ export type DeleteObjectInput = {
   key: string;
 };
 
+export type GetObjectInput = {
+  bucket: string;
+  key: string;
+};
+
 export type PresignInput = {
   bucket: string;
   key: string;
@@ -31,6 +36,7 @@ export type PresignInput = {
 type Impl = {
   ensureBucket: (bucket: string) => Promise<void>;
   putObject: (input: PutObjectInput) => Promise<void>;
+  getObject: (input: GetObjectInput) => Promise<Uint8Array>;
   deleteObject: (input: DeleteObjectInput) => Promise<void>;
   getPresignedUrl: (input: PresignInput) => Promise<string>;
 };
@@ -83,6 +89,17 @@ const defaultImpl: Impl = {
     );
   },
 
+  async getObject({ bucket, key }) {
+    const out = await getClient().send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+    if (!out.Body) {
+      // Object exists in metadata but has no body — treat as missing.
+      const err = new Error(`garage.getObject: empty body for ${bucket}/${key}`);
+      err.name = 'NoSuchKey';
+      throw err;
+    }
+    return out.Body.transformToByteArray();
+  },
+
   async deleteObject({ bucket, key }) {
     await getClient().send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
   },
@@ -98,6 +115,7 @@ let impl: Impl = defaultImpl;
 
 export const ensureBucket = (bucket: string) => impl.ensureBucket(bucket);
 export const putObject = (input: PutObjectInput) => impl.putObject(input);
+export const getObject = (input: GetObjectInput) => impl.getObject(input);
 export const deleteObject = (input: DeleteObjectInput) => impl.deleteObject(input);
 export const getPresignedUrl = (input: PresignInput) => impl.getPresignedUrl(input);
 
