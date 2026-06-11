@@ -13,3 +13,5 @@ coverage/
 pgdata/
 garage-meta/
 garage-data/
+
+.claude/scheduled_tasks.lock
