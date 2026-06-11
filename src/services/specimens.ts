@@ -572,7 +572,13 @@ async function tryIdentifyOffline(
         identificationSource: 'plantnet_auto',
         updatedAt: new Date(),
       })
-      .where(eq(specimens.id, specimen.id))
+      .where(
+        and(
+          eq(specimens.id, specimen.id),
+          eq(specimens.identificationSource, 'none'),
+          isNull(specimens.deletedAt),
+        ),
+      )
       .returning();
     return updated ?? specimen;
   } catch (err) {
@@ -677,12 +683,16 @@ export async function retryIdentify(userId: string, id: string): Promise<Specime
         eq(specimens.id, id),
         eq(specimens.userId, userId),
         eq(specimens.identificationSource, 'none'),
+        isNull(specimens.deletedAt),
       ),
     )
     .returning();
 
   if (!updated) {
-    // A concurrent retry won the race and already identified this specimen.
+    // The guarded UPDATE matched no row: either a concurrent retry already
+    // identified this specimen, or it was soft-deleted between the initial
+    // SELECT and the UPDATE. Re-SELECT the live row and return it; if it's
+    // gone (deleted), surface 404.
     const [current] = await db
       .select()
       .from(specimens)
