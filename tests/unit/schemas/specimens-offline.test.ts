@@ -16,7 +16,11 @@ describe('CreateSpecimenOfflineFormSchema', () => {
   });
 
   it('coerces lat/lng strings to numbers within bounds', () => {
-    const r = CreateSpecimenOfflineFormSchema.safeParse({ ...base(), lat: '48.8566', lng: '2.3522' });
+    const r = CreateSpecimenOfflineFormSchema.safeParse({
+      ...base(),
+      lat: '48.8566',
+      lng: '2.3522',
+    });
     expect(r.success).toBe(true);
     if (r.success) {
       expect(r.data.lat).toBeCloseTo(48.8566, 4);
@@ -30,7 +34,10 @@ describe('CreateSpecimenOfflineFormSchema', () => {
   });
 
   it('rejects identification_source other than none', () => {
-    const r = CreateSpecimenOfflineFormSchema.safeParse({ ...base(), identification_source: 'plantnet_auto' });
+    const r = CreateSpecimenOfflineFormSchema.safeParse({
+      ...base(),
+      identification_source: 'plantnet_auto',
+    });
     expect(r.success).toBe(false);
   });
 

@@ -624,7 +624,12 @@ describe('POST /v1/specimens — offline sync (multipart)', () => {
       body: form,
     });
     expect(res.status).toBe(201);
-    const body = (await res.json()) as { id: string; identification_source: string; scientific_name: string | null; photo_url: string };
+    const body = (await res.json()) as {
+      id: string;
+      identification_source: string;
+      scientific_name: string | null;
+      photo_url: string;
+    };
     expect(body.id).toBe(sid);
     expect(body.identification_source).toBe('plantnet_auto');
     expect(body.scientific_name).toBe('Lycoris radiata');
@@ -668,7 +673,11 @@ describe('POST /v1/specimens — offline sync (multipart)', () => {
       form.append('identification_source', 'none');
       form.append('collected_at', '2026-06-11T10:00:00Z');
       form.append('photo', tinyJpeg(), 'flower.jpg');
-      return app.request('/v1/specimens', { method: 'POST', headers: bearerHeaders(u.sessionToken), body: form });
+      return app.request('/v1/specimens', {
+        method: 'POST',
+        headers: bearerHeaders(u.sessionToken),
+        body: form,
+      });
     };
     const first = await mk();
     expect(first.status).toBe(201);
@@ -686,7 +695,11 @@ describe('POST /v1/specimens — offline sync (multipart)', () => {
     form.append('identification_source', 'plantnet_auto');
     form.append('collected_at', '2026-06-11T10:00:00Z');
     form.append('photo', tinyJpeg(), 'flower.jpg');
-    const res = await app.request('/v1/specimens', { method: 'POST', headers: bearerHeaders(u.sessionToken), body: form });
+    const res = await app.request('/v1/specimens', {
+      method: 'POST',
+      headers: bearerHeaders(u.sessionToken),
+      body: form,
+    });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe('VALIDATION');
@@ -699,7 +712,11 @@ describe('POST /v1/specimens — offline sync (multipart)', () => {
     form.append('id', uuid7());
     form.append('identification_source', 'none');
     form.append('collected_at', '2026-06-11T10:00:00Z');
-    const res = await app.request('/v1/specimens', { method: 'POST', headers: bearerHeaders(u.sessionToken), body: form });
+    const res = await app.request('/v1/specimens', {
+      method: 'POST',
+      headers: bearerHeaders(u.sessionToken),
+      body: form,
+    });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe('MISSING_FIELD');
@@ -718,7 +735,10 @@ describe('POST /v1/specimens — offline sync (multipart)', () => {
 });
 
 describe('POST /v1/specimens/:id/identify', () => {
-  async function createOfflineNone(app: ReturnType<typeof buildTestApp>, u: Awaited<ReturnType<typeof makeUser>>) {
+  async function createOfflineNone(
+    app: ReturnType<typeof buildTestApp>,
+    u: Awaited<ReturnType<typeof makeUser>>,
+  ) {
     const restore = installMockPlantnet({ fail: 'unavailable' });
     const sid = uuid7();
     createdKeys.push({ bucket: TEST_SPECIMENS_BUCKET, key: `${u.userId}/${sid}.jpg` });
@@ -727,7 +747,11 @@ describe('POST /v1/specimens/:id/identify', () => {
     form.append('identification_source', 'none');
     form.append('collected_at', '2026-06-11T10:00:00Z');
     form.append('photo', tinyJpeg(), 'flower.jpg');
-    const res = await app.request('/v1/specimens', { method: 'POST', headers: bearerHeaders(u.sessionToken), body: form });
+    const res = await app.request('/v1/specimens', {
+      method: 'POST',
+      headers: bearerHeaders(u.sessionToken),
+      body: form,
+    });
     expect(res.status).toBe(201);
     restore(); // remove the failing mock so the retry can use a fresh one
     return sid;
@@ -738,9 +762,15 @@ describe('POST /v1/specimens/:id/identify', () => {
     const u = await makeUser('rty-a');
     const sid = await createOfflineNone(app, u);
     restores.push(installMockPlantnet());
-    const res = await app.request(`/v1/specimens/${sid}/identify`, { method: 'POST', headers: bearerHeaders(u.sessionToken) });
+    const res = await app.request(`/v1/specimens/${sid}/identify`, {
+      method: 'POST',
+      headers: bearerHeaders(u.sessionToken),
+    });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { identification_source: string; scientific_name: string | null };
+    const body = (await res.json()) as {
+      identification_source: string;
+      scientific_name: string | null;
+    };
     expect(body.identification_source).toBe('plantnet_auto');
     expect(body.scientific_name).toBe('Lycoris radiata');
   });
@@ -750,9 +780,15 @@ describe('POST /v1/specimens/:id/identify', () => {
     const u = await makeUser('rty-b');
     const sid = await createOfflineNone(app, u);
     restores.push(installMockPlantnet());
-    const first = await app.request(`/v1/specimens/${sid}/identify`, { method: 'POST', headers: bearerHeaders(u.sessionToken) });
+    const first = await app.request(`/v1/specimens/${sid}/identify`, {
+      method: 'POST',
+      headers: bearerHeaders(u.sessionToken),
+    });
     expect(first.status).toBe(200);
-    const second = await app.request(`/v1/specimens/${sid}/identify`, { method: 'POST', headers: bearerHeaders(u.sessionToken) });
+    const second = await app.request(`/v1/specimens/${sid}/identify`, {
+      method: 'POST',
+      headers: bearerHeaders(u.sessionToken),
+    });
     expect(second.status).toBe(409);
     const body = (await second.json()) as { error: { code: string } };
     expect(body.error.code).toBe('ALREADY_IDENTIFIED');
@@ -766,9 +802,15 @@ describe('POST /v1/specimens/:id/identify', () => {
     await testDb
       .insert(plantnetUsage)
       .values({ userId: u.userId, day: today, count: 30 })
-      .onConflictDoUpdate({ target: [plantnetUsage.userId, plantnetUsage.day], set: { count: 30 } });
+      .onConflictDoUpdate({
+        target: [plantnetUsage.userId, plantnetUsage.day],
+        set: { count: 30 },
+      });
     restores.push(installMockPlantnet());
-    const res = await app.request(`/v1/specimens/${sid}/identify`, { method: 'POST', headers: bearerHeaders(u.sessionToken) });
+    const res = await app.request(`/v1/specimens/${sid}/identify`, {
+      method: 'POST',
+      headers: bearerHeaders(u.sessionToken),
+    });
     expect(res.status).toBe(429);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe('QUOTA_EXCEEDED');
@@ -779,7 +821,10 @@ describe('POST /v1/specimens/:id/identify', () => {
     const u = await makeUser('rty-d');
     const sid = await createOfflineNone(app, u);
     restores.push(installMockPlantnet({ fail: 'unavailable' }));
-    const res = await app.request(`/v1/specimens/${sid}/identify`, { method: 'POST', headers: bearerHeaders(u.sessionToken) });
+    const res = await app.request(`/v1/specimens/${sid}/identify`, {
+      method: 'POST',
+      headers: bearerHeaders(u.sessionToken),
+    });
     expect(res.status).toBe(502);
     const [usage] = await testDb
       .select({ count: plantnetUsage.count })

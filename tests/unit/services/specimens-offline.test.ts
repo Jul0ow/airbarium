@@ -3,12 +3,12 @@ import { eq } from 'drizzle-orm';
 import { DAILY_PLANTNET_QUOTA } from '@/config/constants';
 import { plantnetUsage, specimens, users } from '@/db/schema';
 import { __setGarageForTests } from '@/lib/garage';
+import { flushPendingEnrichments } from '@/services/species-enrichment';
 import * as service from '@/services/specimens';
 import type { AppError } from '@/utils/errors';
 import { uuid7 } from '@/utils/uuid';
 import { setupTestDb, testDb, truncateAll } from '../../helpers/db';
 import { installMockPlantnet } from '../../helpers/plantnet';
-import { flushPendingEnrichments } from '@/services/species-enrichment';
 import { installMockWikipedia } from '../../helpers/wikipedia';
 
 const restores: Array<() => void> = [];
@@ -75,7 +75,13 @@ describe('service.create offline — PlantNet OK', () => {
     restores.push(
       installMockPlantnet({
         results: [
-          { scientificName: 'Acer rubrum', commonName: 'Érable', family: 'Sapindaceae', referencePhotoUrl: null, score: 0.21 },
+          {
+            scientificName: 'Acer rubrum',
+            commonName: 'Érable',
+            family: 'Sapindaceae',
+            referencePhotoUrl: null,
+            score: 0.21,
+          },
         ],
       }),
     );
@@ -116,7 +122,9 @@ describe('service.create offline — PlantNet KO leaves source=none', () => {
   it('quota already exhausted → source none, PlantNet not consulted', async () => {
     const uid = await makeUser();
     const today = new Date().toISOString().slice(0, 10);
-    await testDb.insert(plantnetUsage).values({ userId: uid, day: today, count: DAILY_PLANTNET_QUOTA });
+    await testDb
+      .insert(plantnetUsage)
+      .values({ userId: uid, day: today, count: DAILY_PLANTNET_QUOTA });
     restores.push(installMockPlantnet()); // would succeed if called
     const out = await service.create(uid, offlineInput(uuid7()));
     expect(out.specimen.identification_source).toBe('none');
@@ -231,7 +239,9 @@ describe('service.retryIdentify', () => {
   it('429 when quota already exhausted (no refund beyond self-refund)', async () => {
     const uid = await makeUser();
     const today = new Date().toISOString().slice(0, 10);
-    await testDb.insert(plantnetUsage).values({ userId: uid, day: today, count: DAILY_PLANTNET_QUOTA });
+    await testDb
+      .insert(plantnetUsage)
+      .values({ userId: uid, day: today, count: DAILY_PLANTNET_QUOTA });
     restores.push(installMockPlantnet());
     const sid = await makeNoneSpecimen(uid);
     try {

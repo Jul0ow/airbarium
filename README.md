@@ -37,7 +37,7 @@ Health check: `curl http://localhost:3000/v1/health` returns `{ "status": "ok", 
 
 ## Status
 
-Lots 1 (Bootstrap), 2 (DB & migrations), 3 (Auth), 4 (Storage), 5 (Identifications), and 6 (Specimens online) — Hono skeleton, `/v1/health` with DB probe, Drizzle schemas for users/species/identifications/specimens/plantnet_usage/rate_limit, Better Auth wiring with email/password + mailer + bearer plugin, `GET /v1/me`, `PATCH /v1/me`, Garage S3 adapter with presigned URLs, `PUT/DELETE /v1/me/avatar`, `POST /v1/identifications` + `GET /v1/species/:id` with PlantNet + Wikipedia integration and per-user daily quota, `POST/GET/PATCH/DELETE /v1/specimens` + `GET /v1/specimens/stats` with idempotent UUIDv7, threshold-validated promotion, cursor-paginated lists and filters, soft delete, CI with Postgres + Garage services. See the 8-lot roadmap in [`CLAUDE.md`](CLAUDE.md).
+Lots 1 (Bootstrap), 2 (DB & migrations), 3 (Auth), 4 (Storage), 5 (Identifications), 6 (Specimens online), et 7 (Sync offline + retry identify) — Hono skeleton, `/v1/health` with DB probe, Drizzle schemas for users/species/identifications/specimens/plantnet_usage/rate_limit, Better Auth wiring with email/password + mailer + bearer plugin, `GET /v1/me`, `PATCH /v1/me`, Garage S3 adapter with presigned URLs, `PUT/DELETE /v1/me/avatar`, `POST /v1/identifications` + `GET /v1/species/:id` with PlantNet + Wikipedia integration and per-user daily quota, `POST/GET/PATCH/DELETE /v1/specimens` + `GET /v1/specimens/stats` with idempotent UUIDv7, threshold-validated promotion, cursor-paginated lists and filters, soft delete, CI with Postgres + Garage services, `POST /v1/specimens` en multipart pour la sync offline avec identification synchrone best-effort + `POST /v1/specimens/:id/identify` pour retry (Lot 7). See the 8-lot roadmap in [`CLAUDE.md`](CLAUDE.md).
 
 ## Lot 3 — Auth quickstart
 
@@ -266,3 +266,67 @@ Sort options : `collected_at_desc` (défaut), `created_at_desc`, `name_asc`.
 - **Snapshot dénormalisé** : `identified_name`, `scientific_name`, `family`, `confidence_score` sont figés au moment du POST. Une mise à jour future de `species.description` (Wikipedia) ne change pas ce qui est stocké sur le specimen.
 - **Idempotence stricte** : un replay POST avec le même `id` ignore TOUT le reste du body et renvoie le specimen existant (200, no-op).
 - **Race condition** : si 2 POSTs concurrents tentent de promouvoir la même identification, Postgres serialise l'UPDATE conditionnel `WHERE photo_status='temp'` — le perdant voit 0 row et lève 409 `ALREADY_PROMOTED`, sa transaction (INSERT specimen inclus) est rollback.
+
+## Lot 7 — Offline sync + retry identify
+
+Deux cas où le flux online de Lot 6 ne s'applique pas : le mobile a pris des photos **hors-ligne** (pas d'identification préalable), et un specimen resté non identifié doit pouvoir être ré-identifié plus tard.
+
+### Sync offline — `POST /v1/specimens` en multipart
+
+Le même endpoint que Lot 6, mais en `multipart/form-data` au lieu de JSON. Le serveur stocke la photo dans Garage (`<user_id>/<specimen_id>.jpg`) puis tente une identification PlantNet **synchrone** (timeout 10s). **Le seuil 0.70 n'est PAS appliqué** : l'utilisateur n'étant pas présent pour arbitrer, le top match est retenu quelle que soit sa confidence (`identification_source='plantnet_auto'`).
+
+Si PlantNet est indisponible, en timeout, ou si le quota est épuisé, le specimen est tout de même créé avec `identification_source='none'` et un **201** est retourné — un batch de sync de 50 photos ne doit jamais échouer à cause d'un hoquet PlantNet. Le mobile retentera via `/:id/identify`.
+
+| Champ (form-data) | Requis | Notes |
+|---|---|---|
+| `id` | oui | UUIDv7 généré côté mobile. Idempotent. |
+| `photo` | oui | `image/jpeg`, ≤ 2 Mo, magic bytes validés. |
+| `identification_source` | oui | doit valoir `none`. |
+| `collected_at` | oui | ISO 8601 avec offset. |
+| `lat`, `lng` | non | coordonnées, bornées. |
+| `location_label`, `user_notes` | non | texte libre. |
+
+```bash
+TOKEN=...
+SID=$(bun -e 'import { uuid7 } from "./src/utils/uuid.ts"; console.log(uuid7())')
+
+curl -X POST http://localhost:3000/v1/specimens \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "id=$SID" \
+  -F "identification_source=none" \
+  -F "collected_at=2026-06-11T12:00:00Z" \
+  -F "photo=@./flower.jpg"
+# → 201 : specimen identifié (plantnet_auto) si PlantNet OK, sinon source='none'
+# Replay même id → 200 (idempotent, pas de ré-upload)
+```
+
+### Retry identify — `POST /v1/specimens/:id/identify`
+
+Ré-identifie un specimen resté `identification_source='none'`. Le serveur re-télécharge la photo depuis Garage et la repasse à PlantNet (même règle qu'en offline-sync : pas de seuil). Body vide.
+
+```bash
+curl -X POST http://localhost:3000/v1/specimens/$SID/identify \
+  -H "Authorization: Bearer $TOKEN"
+# → 200 specimen mis à jour avec le snapshot d'identification
+```
+
+### Codes d'erreur (Lot 7)
+
+| Status | Code | Cause |
+|---|---|---|
+| `400` | `MISSING_FIELD` | Champ `photo` absent en multipart |
+| `400` | `INVALID_CONTENT_TYPE` | `photo` n'est pas `image/jpeg` |
+| `400` | `VALIDATION` | Champs multipart invalides (`identification_source` ≠ `none`, etc.) |
+| `409` | `ALREADY_IDENTIFIED` | Retry sur un specimen déjà identifié (immuable) |
+| `415` | `UNSUPPORTED_MEDIA_TYPE` | Content-Type ni `application/json` ni `multipart/form-data` |
+| `422` | `NO_MATCH` | PlantNet n'a renvoyé aucun candidat (retry ; quota consommé) |
+| `429` | `QUOTA_EXCEEDED` | Quota PlantNet quotidien (30/jour) épuisé (retry) |
+| `500` | `PHOTO_NOT_FOUND` | Photo absente de Garage alors que le specimen existe (retry) |
+| `502` | `PLANTNET_UNAVAILABLE` | PlantNet KO (retry ; quota remboursé) |
+
+### Notes d'implémentation
+
+- **Même `create()`, deux branches** : `POST /v1/specimens` bifurque sur le `Content-Type`. La branche JSON (Lot 6) est inchangée ; la branche multipart partage le check d'idempotence puis suit le flux offline.
+- **Quota** : convention Lot 5 — l'appel PlantNet est compté avant exécution, remboursé uniquement sur erreur ≠ 200 (timeout / 5xx / quota global) ou photo manquante. **Jamais remboursé sur `no_match`** (résultats vides = 200 légitime).
+- **Best-effort en offline** : l'identification synchrone du flux offline ne fait jamais échouer le POST. Toute erreur (PlantNet, quota, ou même une panne DB après l'insert) laisse le specimen en `source='none'`, récupérable via le retry.
+- **Immutabilité** : `/:id/identify` n'est valide que si `identification_source='none'`. Une identification posée ne se remplace pas (409).

@@ -548,8 +548,7 @@ async function tryIdentifyOffline(
   }
 
   try {
-    let results: Awaited<ReturnType<typeof identifyRaw>>['results'];
-    ({ results } = await identifyRaw(photo));
+    const { results } = await identifyRaw(photo);
 
     const top = results[0];
     if (!top) return specimen; // no_match: 200 legit, no refund, stays 'none'
