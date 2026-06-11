@@ -11,7 +11,8 @@ Airbarium — flower identification app. Backend: Bun + Hono + PostgreSQL + Gara
 ```bash
 bun install              # install deps
 bun run dev              # hot-reload API (bun --watch src/server.ts)
-bun run cron             # run cron worker (separate process)
+bun run start            # start API without watch (production-style)
+bun run auth:secret      # generate a BETTER_AUTH_SECRET (run before db:migrate)
 bun test                 # run all tests
 bun run typecheck        # tsc --noEmit
 bun run lint             # biome check .
@@ -65,8 +66,11 @@ Required env vars (copy `.env.example`):
 - **Better Auth routes (`/v1/auth/*`) return Better Auth's native error shape** (`{ message, code }`), not our `{ error: { code, message } }` envelope. This is intentional — the BA client SDK depends on it.
 - **Password reset request endpoint is `/v1/auth/request-password-reset`** (BA's actual route). Older docs may say `/forget-password` — that path is not exposed by our BA version.
 - **Trusted origins and CORS origins must stay in sync** — both lists live in `src/auth/better-auth.ts` (`trustedOrigins`) and `src/app.ts` (`cors.origin`). Add new client origins to both.
+- **`db:migrate` / `db:generate` need a valid `.env`** — `drizzle.config.ts` imports the Zod-validated env, which requires `BETTER_AUTH_SECRET` (32+ chars). Run `bun run auth:secret` and paste it into `.env` before any migration, otherwise the config fails to load.
 
 ## 8-lot roadmap
+
+> Statut au 2026-06-12 : lots 1–7 livrés (offline sync mergé). Lot 8 (RGPD + cron + observabilité + Helm) pas encore implémenté — `src/cron.ts`, le middleware rate-limit et `/metrics` n'existent pas encore. Le script `bun run cron` sera ajouté avec ce lot.
 
 | # | Lot | Depends on |
 |---|-----|-----------|
