@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { eq } from 'drizzle-orm';
-import { identifications, specimens } from '@/db/schema';
+import { identifications, plantnetUsage, specimens } from '@/db/schema';
 import { uuid7 } from '@/utils/uuid';
 import { buildTestApp } from '../helpers/app';
 import { bearerHeaders, signUpTestUser } from '../helpers/auth';
@@ -601,5 +601,182 @@ describe('DELETE /v1/specimens/:id', () => {
       headers: bearerHeaders(u.sessionToken),
     });
     expect(del2.status).toBe(204);
+  });
+});
+
+describe('POST /v1/specimens — offline sync (multipart)', () => {
+  it('201 and identifies the specimen when PlantNet matches', async () => {
+    const app = buildTestApp();
+    const u = await makeUser('off-a');
+    restores.push(installMockPlantnet());
+    const sid = uuid7();
+    createdKeys.push({ bucket: TEST_SPECIMENS_BUCKET, key: `${u.userId}/${sid}.jpg` });
+
+    const form = new FormData();
+    form.append('id', sid);
+    form.append('identification_source', 'none');
+    form.append('collected_at', '2026-06-11T10:00:00Z');
+    form.append('photo', tinyJpeg(), 'flower.jpg');
+
+    const res = await app.request('/v1/specimens', {
+      method: 'POST',
+      headers: bearerHeaders(u.sessionToken),
+      body: form,
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: string; identification_source: string; scientific_name: string | null; photo_url: string };
+    expect(body.id).toBe(sid);
+    expect(body.identification_source).toBe('plantnet_auto');
+    expect(body.scientific_name).toBe('Lycoris radiata');
+    expect(body.photo_url).toContain('X-Amz-Signature');
+  });
+
+  it('201 with source none when PlantNet is unavailable', async () => {
+    const app = buildTestApp();
+    const u = await makeUser('off-b');
+    restores.push(installMockPlantnet({ fail: 'unavailable' }));
+    const sid = uuid7();
+    createdKeys.push({ bucket: TEST_SPECIMENS_BUCKET, key: `${u.userId}/${sid}.jpg` });
+
+    const form = new FormData();
+    form.append('id', sid);
+    form.append('identification_source', 'none');
+    form.append('collected_at', '2026-06-11T10:00:00Z');
+    form.append('photo', tinyJpeg(), 'flower.jpg');
+
+    const res = await app.request('/v1/specimens', {
+      method: 'POST',
+      headers: bearerHeaders(u.sessionToken),
+      body: form,
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { identification_source: string; species_id: string | null };
+    expect(body.identification_source).toBe('none');
+    expect(body.species_id).toBeNull();
+  });
+
+  it('replaying the same id is idempotent (200)', async () => {
+    const app = buildTestApp();
+    const u = await makeUser('off-c');
+    restores.push(installMockPlantnet());
+    const sid = uuid7();
+    createdKeys.push({ bucket: TEST_SPECIMENS_BUCKET, key: `${u.userId}/${sid}.jpg` });
+
+    const mk = () => {
+      const form = new FormData();
+      form.append('id', sid);
+      form.append('identification_source', 'none');
+      form.append('collected_at', '2026-06-11T10:00:00Z');
+      form.append('photo', tinyJpeg(), 'flower.jpg');
+      return app.request('/v1/specimens', { method: 'POST', headers: bearerHeaders(u.sessionToken), body: form });
+    };
+    expect((await mk()).status).toBe(201);
+    expect((await mk()).status).toBe(200);
+  });
+
+  it('400 when identification_source is not none in multipart', async () => {
+    const app = buildTestApp();
+    const u = await makeUser('off-d');
+    const form = new FormData();
+    form.append('id', uuid7());
+    form.append('identification_source', 'plantnet_auto');
+    form.append('collected_at', '2026-06-11T10:00:00Z');
+    form.append('photo', tinyJpeg(), 'flower.jpg');
+    const res = await app.request('/v1/specimens', { method: 'POST', headers: bearerHeaders(u.sessionToken), body: form });
+    expect(res.status).toBe(400);
+  });
+
+  it('400 MISSING_FIELD when photo is absent', async () => {
+    const app = buildTestApp();
+    const u = await makeUser('off-e');
+    const form = new FormData();
+    form.append('id', uuid7());
+    form.append('identification_source', 'none');
+    form.append('collected_at', '2026-06-11T10:00:00Z');
+    const res = await app.request('/v1/specimens', { method: 'POST', headers: bearerHeaders(u.sessionToken), body: form });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe('MISSING_FIELD');
+  });
+
+  it('415 for an unsupported content-type', async () => {
+    const app = buildTestApp();
+    const u = await makeUser('off-f');
+    const res = await app.request('/v1/specimens', {
+      method: 'POST',
+      headers: { ...bearerHeaders(u.sessionToken), 'Content-Type': 'application/xml' },
+      body: '<x/>',
+    });
+    expect(res.status).toBe(415);
+  });
+});
+
+describe('POST /v1/specimens/:id/identify', () => {
+  async function createOfflineNone(app: ReturnType<typeof buildTestApp>, u: Awaited<ReturnType<typeof makeUser>>) {
+    const restore = installMockPlantnet({ fail: 'unavailable' });
+    const sid = uuid7();
+    createdKeys.push({ bucket: TEST_SPECIMENS_BUCKET, key: `${u.userId}/${sid}.jpg` });
+    const form = new FormData();
+    form.append('id', sid);
+    form.append('identification_source', 'none');
+    form.append('collected_at', '2026-06-11T10:00:00Z');
+    form.append('photo', tinyJpeg(), 'flower.jpg');
+    const res = await app.request('/v1/specimens', { method: 'POST', headers: bearerHeaders(u.sessionToken), body: form });
+    expect(res.status).toBe(201);
+    restore(); // remove the failing mock so the retry can use a fresh one
+    return sid;
+  }
+
+  it('200 identifies a previously-unidentified specimen', async () => {
+    const app = buildTestApp();
+    const u = await makeUser('rty-a');
+    const sid = await createOfflineNone(app, u);
+    restores.push(installMockPlantnet());
+    const res = await app.request(`/v1/specimens/${sid}/identify`, { method: 'POST', headers: bearerHeaders(u.sessionToken) });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { identification_source: string; scientific_name: string | null };
+    expect(body.identification_source).toBe('plantnet_auto');
+    expect(body.scientific_name).toBe('Lycoris radiata');
+  });
+
+  it('409 ALREADY_IDENTIFIED when re-identifying an identified specimen', async () => {
+    const app = buildTestApp();
+    const u = await makeUser('rty-b');
+    const sid = await createOfflineNone(app, u);
+    restores.push(installMockPlantnet());
+    const first = await app.request(`/v1/specimens/${sid}/identify`, { method: 'POST', headers: bearerHeaders(u.sessionToken) });
+    expect(first.status).toBe(200);
+    const second = await app.request(`/v1/specimens/${sid}/identify`, { method: 'POST', headers: bearerHeaders(u.sessionToken) });
+    expect(second.status).toBe(409);
+    const body = (await second.json()) as { error: { code: string } };
+    expect(body.error.code).toBe('ALREADY_IDENTIFIED');
+  });
+
+  it('429 when the daily quota is exhausted', async () => {
+    const app = buildTestApp();
+    const u = await makeUser('rty-c');
+    const sid = await createOfflineNone(app, u);
+    const today = new Date().toISOString().slice(0, 10);
+    await testDb
+      .insert(plantnetUsage)
+      .values({ userId: u.userId, day: today, count: 30 })
+      .onConflictDoUpdate({ target: [plantnetUsage.userId, plantnetUsage.day], set: { count: 30 } });
+    restores.push(installMockPlantnet());
+    const res = await app.request(`/v1/specimens/${sid}/identify`, { method: 'POST', headers: bearerHeaders(u.sessionToken) });
+    expect(res.status).toBe(429);
+  });
+
+  it('502 and refunds quota when PlantNet is unavailable', async () => {
+    const app = buildTestApp();
+    const u = await makeUser('rty-d');
+    const sid = await createOfflineNone(app, u);
+    restores.push(installMockPlantnet({ fail: 'unavailable' }));
+    const res = await app.request(`/v1/specimens/${sid}/identify`, { method: 'POST', headers: bearerHeaders(u.sessionToken) });
+    expect(res.status).toBe(502);
+    const [usage] = await testDb
+      .select({ count: plantnetUsage.count })
+      .from(plantnetUsage)
+      .where(eq(plantnetUsage.userId, u.userId));
+    expect(usage?.count ?? 0).toBe(0);
   });
 });
