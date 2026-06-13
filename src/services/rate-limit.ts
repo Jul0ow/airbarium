@@ -33,7 +33,13 @@ export async function checkGlobalRateLimit(
       set: { count: sql`${rateLimit.count} + 1` },
     });
 
-  // Sum counts across all in-window buckets (sliding window).
+  // Sum counts across all in-window buckets (sliding window). This is a
+  // SEPARATE statement from the upsert above — unlike quota.ts, we cannot use
+  // .returning() to decide here, because the decision spans multiple bucket
+  // rows, not one. The tiny gap between increment and SELECT is a deliberate,
+  // bounded TOCTOU: under concurrency a request may observe siblings' counts
+  // and over-reject slightly, which is the safe direction for a guardrail and
+  // negligible at MVP volume. Do not "fix" this by cargo-culting .returning().
   const windowCutoff = new Date(Date.now() - GLOBAL_RATE_LIMIT_WINDOW_MS);
   const [row] = await db
     .select({ total: sql<string>`coalesce(sum(${rateLimit.count}), 0)` })
@@ -42,5 +48,8 @@ export async function checkGlobalRateLimit(
 
   const total = Number(row?.total ?? 0);
 
+  // `total` is POST-increment (it includes this request). `<=` is therefore
+  // correct: when total == MAX this request is the MAX-th and is allowed; the
+  // MAX+1-th request is the first to be rejected.
   return { allowed: total <= GLOBAL_RATE_LIMIT_MAX, retryAfterSeconds: 60 };
 }
