@@ -18,6 +18,7 @@ import { CONFIDENCE_THRESHOLD, SPECIMENS_BUCKET } from '@/config/constants';
 import { db } from '@/db/client';
 import { identifications, type Specimen, species as speciesTable, specimens } from '@/db/schema';
 import { getObject, getPresignedUrl, putObject } from '@/lib/garage';
+import { recordSyncIngest } from '@/lib/metrics';
 import {
   identifyRaw,
   PlantnetQuotaExhaustedError,
@@ -524,6 +525,7 @@ async function createOffline(userId: string, input: CreateOfflineInput): Promise
   }
 
   const final = await tryIdentifyOffline(userId, inserted, input.photo);
+  recordSyncIngest(final.identificationSource === 'none' ? 'unidentified' : 'identified');
   return { specimen: await toSpecimenResponse(final), wasCreated: true };
 }
 
