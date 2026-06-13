@@ -39,6 +39,8 @@ Dev emails visible at http://localhost:8025 (MailHog).
 Required env vars (copy `.env.example`):
 `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `GARAGE_ENDPOINT`, `GARAGE_ACCESS_KEY`, `GARAGE_SECRET_KEY`, `GARAGE_REGION`, `PLANTNET_API_KEY`, `SMTP_URL`, `MAIL_FROM`, `WIKIPEDIA_USER_AGENT`, `APP_URL`, `PORT`, `LOG_LEVEL`
 
+Optional: `PUSHGATEWAY_URL` (Lot 8d) — when set, the cron pushes purge metrics to a Prometheus Pushgateway; unset means the cron only logs its purge counts.
+
 ## Testing
 
 - **Unit tests** (`tests/unit/`) — services and lib adapters tested with mocks. PlantNet and Wikipedia calls are always mocked.
@@ -70,7 +72,7 @@ Required env vars (copy `.env.example`):
 
 ## 8-lot roadmap
 
-> Statut au 2026-06-12 : lots 1–7 livrés (offline sync mergé). Lot 8 (RGPD + cron + observabilité + Helm) pas encore implémenté — `src/cron.ts`, le middleware rate-limit et `/metrics` n'existent pas encore. Le script `bun run cron` sera ajouté avec ce lot.
+> Statut au 2026-06-14 : lots 1–7 livrés (offline sync mergé). Lot 8 en cours, découpé en sous-lots : 8a (RGPD `DELETE /v1/me` + réconciliation Garage), 8b (cron de purge, `src/cron.ts` + `bun run cron`), 8c (rate limiting Postgres + middleware), 8d (observabilité — `/metrics` Prometheus, sondes `/v1/health` + `/v1/health/ready`, Pushgateway cron) **livrés**. Reste 8e : chart Helm + `CronJob` Kubernetes.
 
 | # | Lot | Depends on |
 |---|-----|-----------|
