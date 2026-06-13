@@ -1,6 +1,8 @@
 import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { and, eq } from 'drizzle-orm';
+import { DAILY_PLANTNET_QUOTA } from '@/config/constants';
 import { plantnetUsage, users } from '@/db/schema';
+import { register } from '@/lib/metrics';
 import { incrementOrThrow, refund } from '@/services/quota';
 import { AppError } from '@/utils/errors';
 import { uuid7 } from '@/utils/uuid';
@@ -57,6 +59,17 @@ describe('incrementOrThrow', () => {
       expect((err as AppError).status).toBe(429);
     }
     expect(await readCount(uid)).toBe(30);
+  });
+
+  it('records the quota_exceeded PlantNet metric on the rejected call (§15)', async () => {
+    const uid = await createUser();
+    register.resetMetrics();
+    for (let i = 0; i < DAILY_PLANTNET_QUOTA; i++) await incrementOrThrow(uid);
+
+    await expect(incrementOrThrow(uid)).rejects.toBeInstanceOf(AppError);
+
+    const text = await register.metrics();
+    expect(text).toContain('airbarium_plantnet_requests_total{outcome="quota_exceeded"} 1');
   });
 });
 

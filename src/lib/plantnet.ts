@@ -1,4 +1,5 @@
 import { env } from '@/config/env';
+import { recordPlantnet } from '@/lib/metrics';
 
 const PLANTNET_URL = 'https://my-api.plantnet.org/v2/identify/all';
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -84,23 +85,32 @@ const defaultImpl: Impl = {
 
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), timeoutMs);
-    let res: Response;
+    // Records the call outcome exactly once: success/no_match on the happy path,
+    // error for every throw (timeout, 5xx, global-quota 429, parse failure).
+    // The per-user quota gate is recorded separately in services/quota.ts.
     try {
-      res = await fetch(url, { method: 'POST', body: form, signal: controller.signal });
+      let res: Response;
+      try {
+        res = await fetch(url, { method: 'POST', body: form, signal: controller.signal });
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') throw new PlantnetTimeoutError();
+        throw new PlantnetUnavailableError(0, (err as Error).message);
+      } finally {
+        clearTimeout(t);
+      }
+
+      if (res.status === 429) throw new PlantnetQuotaExhaustedError();
+      if (res.status >= 500) throw new PlantnetUnavailableError(res.status, await res.text());
+      if (!res.ok) throw new PlantnetUnavailableError(res.status, await res.text());
+
+      const raw = (await res.json()) as PlantnetRawResponse;
+      const results = (raw.results as RawResult[] | undefined)?.map(mapResult) ?? [];
+      recordPlantnet(results.length > 0 ? 'success' : 'no_match');
+      return { raw, results };
     } catch (err) {
-      if ((err as Error).name === 'AbortError') throw new PlantnetTimeoutError();
-      throw new PlantnetUnavailableError(0, (err as Error).message);
-    } finally {
-      clearTimeout(t);
+      recordPlantnet('error');
+      throw err;
     }
-
-    if (res.status === 429) throw new PlantnetQuotaExhaustedError();
-    if (res.status >= 500) throw new PlantnetUnavailableError(res.status, await res.text());
-    if (!res.ok) throw new PlantnetUnavailableError(res.status, await res.text());
-
-    const raw = (await res.json()) as PlantnetRawResponse;
-    const results = (raw.results as RawResult[] | undefined)?.map(mapResult) ?? [];
-    return { raw, results };
   },
   async identify(buffer, opts) {
     return (await defaultImpl.identifyRaw(buffer, opts)).results;
