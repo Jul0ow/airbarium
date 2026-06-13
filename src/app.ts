@@ -6,6 +6,7 @@ import { auth } from '@/auth/better-auth';
 import { authJsonGuard } from '@/middleware/auth-json-guard';
 import { errorHandler } from '@/middleware/error-handler';
 import { httpLogger } from '@/middleware/logger';
+import { metrics } from '@/middleware/metrics';
 import { requestId } from '@/middleware/request-id';
 import { routes } from '@/routes';
 import { NotFoundError } from '@/utils/errors';
@@ -15,6 +16,7 @@ export const createApp = () => {
 
   app.use('*', requestId());
   app.use('*', httpLogger());
+  app.use('*', metrics());
   app.use(
     '*',
     secureHeaders({
