@@ -145,3 +145,15 @@ describe('globalRateLimit middleware', () => {
     }
   });
 });
+
+describe('globalRateLimit wired into authenticated routes', () => {
+  it('GET /v1/me without auth returns 401, not 429 (auth still runs before rate-limiter)', async () => {
+    const app = buildTestApp();
+    const res = await app.request('/v1/me');
+    expect(res.status).toBe(401);
+    const body = (await res.json()) as {
+      error: { code: string; message: string };
+    };
+    expect(body.error.code).toBe('UNAUTHORIZED');
+  });
+});
