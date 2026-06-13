@@ -30,6 +30,9 @@ const EnvSchema = z.object({
   GARAGE_REGION: z.string().min(1).default('garage'),
   PLANTNET_API_KEY: z.string().min(1),
   WIKIPEDIA_USER_AGENT: z.string().min(1).default('Airbarium/0.1 (dev)'),
+  // Optional: when set, the cron pushes purge metrics to this Prometheus
+  // Pushgateway. Unset (local/CI/tests) → the cron only logs its purge counts.
+  PUSHGATEWAY_URL: z.string().url().optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
