@@ -31,13 +31,12 @@ Health check: `curl http://localhost:3000/v1/health` returns `{ "status": "ok", 
 | `bun run format` | `biome format --write .` |
 | `bun run db:generate` | Generate a Drizzle migration from schema changes |
 | `bun run db:migrate` | Apply migrations to the local DB |
+| `bun run cron` | Worker one-shot : exécute un cycle de purge puis se termine (`exit 0`, ou `exit 1` si une étape DB échoue) |
 | `bun run db:studio` | Open Drizzle Studio |
-
-`cron` is added in later lots.
 
 ## Status
 
-Lots 1 (Bootstrap), 2 (DB & migrations), 3 (Auth), 4 (Storage), 5 (Identifications), 6 (Specimens online), 7 (Sync offline + retry identify), et 8a (RGPD — suppression de compte) livrés — Hono skeleton, `/v1/health` with DB probe, Drizzle schemas for users/species/identifications/specimens/plantnet_usage/rate_limit, Better Auth wiring with email/password + mailer + bearer plugin, `GET /v1/me`, `PATCH /v1/me`, Garage S3 adapter with presigned URLs, `PUT/DELETE /v1/me/avatar`, `POST /v1/identifications` + `GET /v1/species/:id` with PlantNet + Wikipedia integration and per-user daily quota, `POST/GET/PATCH/DELETE /v1/specimens` + `GET /v1/specimens/stats` with idempotent UUIDv7, threshold-validated promotion, cursor-paginated lists and filters, soft delete, CI with Postgres + Garage services, `POST /v1/specimens` en multipart pour la sync offline avec identification synchrone best-effort + `POST /v1/specimens/:id/identify` pour retry (Lot 7), `DELETE /v1/me` RGPD hard delete avec purge Garage (Lot 8a). Reste du lot 8 (cron 8b, rate-limit 8c, observabilité 8d, Helm 8e) en attente. See the 8-lot roadmap in [`CLAUDE.md`](CLAUDE.md).
+Lots 1 (Bootstrap), 2 (DB & migrations), 3 (Auth), 4 (Storage), 5 (Identifications), 6 (Specimens online), 7 (Sync offline + retry identify), 8a (RGPD — suppression de compte) et 8b (Cron de purge + réconciliation orphelins) livrés — Hono skeleton, `/v1/health` with DB probe, Drizzle schemas for users/species/identifications/specimens/plantnet_usage/rate_limit, Better Auth wiring with email/password + mailer + bearer plugin, `GET /v1/me`, `PATCH /v1/me`, Garage S3 adapter with presigned URLs, `PUT/DELETE /v1/me/avatar`, `POST /v1/identifications` + `GET /v1/species/:id` with PlantNet + Wikipedia integration and per-user daily quota, `POST/GET/PATCH/DELETE /v1/specimens` + `GET /v1/specimens/stats` with idempotent UUIDv7, threshold-validated promotion, cursor-paginated lists and filters, soft delete, CI with Postgres + Garage services, `POST /v1/specimens` en multipart pour la sync offline avec identification synchrone best-effort + `POST /v1/specimens/:id/identify` pour retry (Lot 7), `DELETE /v1/me` RGPD hard delete avec purge Garage (Lot 8a), worker `bun run cron` one-shot + réconciliation des objets Garage orphelins (Lot 8b). Reste : 8c (rate-limit), 8d (observabilité `/metrics`), 8e (Helm). See the 8-lot roadmap in [`CLAUDE.md`](CLAUDE.md).
 
 ## Lot 3 — Auth quickstart
 
@@ -348,7 +347,7 @@ curl -sS -X DELETE http://localhost:3000/v1/me \
 - Les photos Garage référencées en base pour cet utilisateur : objets `specimens/<user_id>/...` de tous ses specimens (**y compris soft-deleted**) et de ses identifications. Les clés sont capturées en base **avant** le cascade puis supprimées une à une (pas de delete par préfixe)
 - L'avatar `avatars/<user_id>.jpg` dans le bucket `avatars`
 
-**Comportement Garage :** la purge Garage est best-effort et hors-transaction. En cas d'erreur S3 (Garage indisponible, objet déjà absent), un `warn` est loggé mais la suppression DB n'est pas annulée. Les éventuels objets orphelins non référencés en base seront réconciliés lors de la mise en place du cron (Lot 8b).
+**Comportement Garage :** la purge Garage est best-effort et hors-transaction. En cas d'erreur S3 (Garage indisponible, objet déjà absent), un `warn` est loggé mais la suppression DB n'est pas annulée. Les éventuels objets orphelins non référencés en base seront réconciliés par le cron (Lot 8b).
 
 **Session :** le cascade supprime la ligne `session`, donc le token Bearer est immédiatement invalide ; le cookie de session est aussi vidé sur la réponse pour les clients web.
 
@@ -357,3 +356,32 @@ curl -sS -X DELETE http://localhost:3000/v1/me \
 | Status | Cause |
 |---|---|
 | `401` | Pas de session valide |
+
+## Lot 8b — Cron de purge + réconciliation orphelins
+
+Le worker `bun run cron` est un processus Bun one-shot (process distinct de l'API, même image Docker). Il exécute un seul cycle de purge puis se termine — l'ordonnancement (ex. toutes les heures) est délégué à un **CronJob Kubernetes** (Lot 8e).
+
+```bash
+bun run cron
+# exit 0 sur DB propre, exit 1 si au moins une étape DB a échoué (le CronJob retentera)
+```
+
+### Ce que le cycle purge
+
+| Catégorie | Règle | Garage |
+|---|---|---|
+| Identifications `temp` expirées | `photo_status='temp'` et `expires_at < now()` | DELETE objet dans le bucket `specimens` |
+| Specimens soft-deleted anciens | `deleted_at < now() - 30 jours` | DELETE objet dans le bucket `specimens` |
+| `plantnet_usage` anciens | `day < current_date - 7 jours` | — |
+
+### Réconciliation des orphelins Garage
+
+Après les purges, le worker liste tous les objets dans les buckets `specimens` et `avatars` et supprime ceux qui ne sont référencés par aucune ligne en base (ni `specimens.photo_url`, ni `identifications.photo_url`, ni `users.avatar_url`). Une **fenêtre de grâce de 24 h** protège les uploads en cours (`lastModified` récent → ignoré). C'est ce passage qui rattrape les objets orphelins laissés par une suppression de compte (Lot 8a) dont le delete Garage avait échoué.
+
+Les erreurs Garage (delete d'un objet individuel, panne de Garage) sont loggées en `warn` et comptées, mais ne font jamais échouer le cycle — un objet orphelin non supprimé sera retenté au prochain passage.
+
+### Codes de sortie et observabilité
+
+- **`exit 0`** — cycle complet sans erreur DB (Garage warn tolérés).
+- **`exit 1`** — au moins une étape DB a échoué (DB inaccessible, contrainte inattendue). Le CronJob k8s retentera selon sa `restartPolicy`.
+- Les métriques Prometheus `/metrics` (histogramme, compteurs purge) seront ajoutées au **Lot 8d**.
