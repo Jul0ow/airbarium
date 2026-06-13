@@ -3,7 +3,7 @@ import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { bearer } from 'better-auth/plugins';
 import { env } from '@/config/env';
 import { db } from '@/db/client';
-import { account, session, users, verification } from '@/db/schema';
+import { account, authRateLimit, session, users, verification } from '@/db/schema';
 import { resetPasswordEmail } from '@/lib/emails/reset-password';
 import { verifyEmailEmail } from '@/lib/emails/verify-email';
 import { sendMail } from '@/lib/mailer';
@@ -21,6 +21,7 @@ export const auth = betterAuth({
       account,
       session,
       verification,
+      rateLimit: authRateLimit,
     },
   }),
   user: {
@@ -70,6 +71,7 @@ export const auth = betterAuth({
   },
   rateLimit: {
     enabled: true,
+    storage: 'database',
     window: 60,
     max: 100,
     customRules: {
