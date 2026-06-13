@@ -1,11 +1,21 @@
 import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { eq } from 'drizzle-orm';
-import { identifications, plantnetUsage, specimens, users } from '@/db/schema';
+import { AUTH_RATE_LIMIT_MAX_WINDOW_MS } from '@/config/constants';
+import {
+  authRateLimit,
+  identifications,
+  plantnetUsage,
+  rateLimit,
+  specimens,
+  users,
+} from '@/db/schema';
 import { __setGarageForTests, getObject, putObject } from '@/lib/garage';
 import {
   purgeExpiredIdentifications,
+  purgeExpiredRateLimits,
   purgeOldPlantnetUsage,
   purgeOldSoftDeletedSpecimens,
+  purgeStaleAuthRateLimits,
   reconcileOrphans,
   runPurgeCycle,
 } from '@/services/purge';
@@ -274,6 +284,86 @@ describe('reconcileOrphans', () => {
   });
 });
 
+describe('purgeExpiredRateLimits', () => {
+  it('deletes expired rate_limit rows, leaves fresh ones', async () => {
+    const expiredKey = 'user:expired@x.com';
+    const freshKey = 'user:fresh@x.com';
+    const windowStart = new Date();
+    await testDb.insert(rateLimit).values([
+      {
+        key: expiredKey,
+        windowStart,
+        count: 5,
+        expiresAt: new Date(Date.now() - 60 * 1000), // 1 minute ago
+      },
+      {
+        key: freshKey,
+        windowStart,
+        count: 2,
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000), // 1 hour from now
+      },
+    ]);
+
+    const res = await purgeExpiredRateLimits();
+
+    expect(res.errored).toBe(false);
+    expect(res.rowsDeleted).toBe(1);
+    expect(await testDb.select().from(rateLimit).where(eq(rateLimit.key, expiredKey))).toHaveLength(
+      0,
+    );
+    expect(await testDb.select().from(rateLimit).where(eq(rateLimit.key, freshKey))).toHaveLength(
+      1,
+    );
+  });
+});
+
+describe('purgeStaleAuthRateLimits', () => {
+  it('deletes stale auth_rate_limit rows (older than window), leaves fresh ones', async () => {
+    const staleId = uuid7();
+    const freshId = uuid7();
+    const staleTs = Date.now() - 2 * AUTH_RATE_LIMIT_MAX_WINDOW_MS; // 2 hours ago
+    const freshTs = Date.now(); // now
+    await testDb.insert(authRateLimit).values([
+      { id: staleId, key: `sign-in:${staleId}`, count: 3, lastRequest: staleTs },
+      { id: freshId, key: `sign-in:${freshId}`, count: 1, lastRequest: freshTs },
+    ]);
+
+    const res = await purgeStaleAuthRateLimits();
+
+    expect(res.errored).toBe(false);
+    expect(res.rowsDeleted).toBe(1);
+    expect(
+      await testDb.select().from(authRateLimit).where(eq(authRateLimit.id, staleId)),
+    ).toHaveLength(0);
+    expect(
+      await testDb.select().from(authRateLimit).where(eq(authRateLimit.id, freshId)),
+    ).toHaveLength(1);
+  });
+
+  it('keeps a row that is just inside the window (strict < boundary)', async () => {
+    const boundaryId = uuid7();
+    // The delete condition is lastRequest < (Date.now() - AUTH_RATE_LIMIT_MAX_WINDOW_MS).
+    // A row at (now - window + 5s) is 5s inside the window at insert time and will
+    // stay inside even if a slow/suspended CI runner advances Date.now() by several
+    // seconds between this insert and the purge call.
+    const justInsideWindow = Date.now() - AUTH_RATE_LIMIT_MAX_WINDOW_MS + 5000;
+    await testDb.insert(authRateLimit).values({
+      id: boundaryId,
+      key: `sign-in:${boundaryId}`,
+      count: 1,
+      lastRequest: justInsideWindow,
+    });
+
+    const res = await purgeStaleAuthRateLimits();
+
+    expect(res.errored).toBe(false);
+    expect(res.rowsDeleted).toBe(0);
+    expect(
+      await testDb.select().from(authRateLimit).where(eq(authRateLimit.id, boundaryId)),
+    ).toHaveLength(1);
+  });
+});
+
 describe('runPurgeCycle', () => {
   it('runs all steps, aggregates counters, hadError=false on a clean run', async () => {
     const userId = await makeUser();
@@ -299,6 +389,8 @@ describe('runPurgeCycle', () => {
       expect(res.hadError).toBe(false);
       expect(res.expiredIdentifications.rowsDeleted).toBe(1);
       expect(res.oldPlantnetUsage.rowsDeleted).toBe(1);
+      expect(res.expiredRateLimits.rowsDeleted).toBe(0);
+      expect(res.staleAuthRateLimits.rowsDeleted).toBe(0);
       expect(res.orphanReconciliation.scanned).toBe(0);
     } finally {
       restore();

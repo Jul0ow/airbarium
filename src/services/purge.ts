@@ -1,5 +1,6 @@
 import { and, eq, isNotNull, lt, sql } from 'drizzle-orm';
 import {
+  AUTH_RATE_LIMIT_MAX_WINDOW_MS,
   AVATARS_BUCKET,
   ORPHAN_GRACE_MS,
   PLANTNET_USAGE_RETENTION_DAYS,
@@ -7,7 +8,14 @@ import {
   SPECIMENS_BUCKET,
 } from '@/config/constants';
 import { db } from '@/db/client';
-import { identifications, plantnetUsage, specimens, users } from '@/db/schema';
+import {
+  authRateLimit,
+  identifications,
+  plantnetUsage,
+  rateLimit,
+  specimens,
+  users,
+} from '@/db/schema';
 import { deleteObject, listObjects } from '@/lib/garage';
 import { logger } from '@/middleware/logger';
 
@@ -106,6 +114,40 @@ export async function purgeOldPlantnetUsage(): Promise<CategoryResult> {
   return res;
 }
 
+export async function purgeExpiredRateLimits(): Promise<CategoryResult> {
+  const res = newCategoryResult();
+  try {
+    const rows = await db
+      .delete(rateLimit)
+      .where(lt(rateLimit.expiresAt, sql`now()`))
+      .returning({ key: rateLimit.key });
+    res.rowsDeleted = rows.length;
+  } catch (err) {
+    res.errored = true;
+    logger.error({ err }, 'cron.purgeExpiredRateLimits: db delete failed');
+  }
+  return res;
+}
+
+export async function purgeStaleAuthRateLimits(): Promise<CategoryResult> {
+  const res = newCategoryResult();
+  try {
+    // lastRequest is bigint({ mode: 'number' }); epoch-ms (~1.75e12) stays well
+    // within JS safe-integer range (~9e15), so this number↔bigint comparison is
+    // exact for decades. cutoff is therefore a safe integer too.
+    const cutoff = Date.now() - AUTH_RATE_LIMIT_MAX_WINDOW_MS;
+    const rows = await db
+      .delete(authRateLimit)
+      .where(lt(authRateLimit.lastRequest, cutoff))
+      .returning({ id: authRateLimit.id });
+    res.rowsDeleted = rows.length;
+  } catch (err) {
+    res.errored = true;
+    logger.error({ err }, 'cron.purgeStaleAuthRateLimits: db delete failed');
+  }
+  return res;
+}
+
 export type ReconcileResult = {
   scanned: number;
   orphansDeleted: number;
@@ -172,6 +214,8 @@ export type PurgeCycleResult = {
   expiredIdentifications: CategoryResult;
   oldSoftDeletedSpecimens: CategoryResult;
   oldPlantnetUsage: CategoryResult;
+  expiredRateLimits: CategoryResult;
+  staleAuthRateLimits: CategoryResult;
   orphanReconciliation: ReconcileResult;
   hadError: boolean;
 };
@@ -181,16 +225,22 @@ export async function runPurgeCycle(): Promise<PurgeCycleResult> {
   const expiredIdentifications = await purgeExpiredIdentifications();
   const oldSoftDeletedSpecimens = await purgeOldSoftDeletedSpecimens();
   const oldPlantnetUsage = await purgeOldPlantnetUsage();
+  const expiredRateLimits = await purgeExpiredRateLimits();
+  const staleAuthRateLimits = await purgeStaleAuthRateLimits();
   const orphanReconciliation = await reconcileOrphans();
   const hadError =
     expiredIdentifications.errored ||
     oldSoftDeletedSpecimens.errored ||
     oldPlantnetUsage.errored ||
+    expiredRateLimits.errored ||
+    staleAuthRateLimits.errored ||
     orphanReconciliation.errored;
   const result: PurgeCycleResult = {
     expiredIdentifications,
     oldSoftDeletedSpecimens,
     oldPlantnetUsage,
+    expiredRateLimits,
+    staleAuthRateLimits,
     orphanReconciliation,
     hadError,
   };
