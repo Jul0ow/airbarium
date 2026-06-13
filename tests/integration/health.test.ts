@@ -1,4 +1,5 @@
-import { beforeAll, describe, expect, it } from 'bun:test';
+import { afterEach, beforeAll, describe, expect, it } from 'bun:test';
+import { __setGarageForTests } from '@/lib/garage';
 import { buildTestApp } from '../helpers/app';
 import { setupTestDb } from '../helpers/db';
 
@@ -36,5 +37,36 @@ describe('GET /v1/health', () => {
     expect(await res.json()).toEqual({
       error: { code: 'NOT_FOUND', message: 'Route not found' },
     });
+  });
+});
+
+describe('GET /v1/health/ready', () => {
+  const restores: Array<() => void> = [];
+  afterEach(() => {
+    while (restores.length) restores.pop()?.();
+  });
+
+  it('returns 200 with db + garage ok when both are reachable', async () => {
+    restores.push(__setGarageForTests({ pingGarage: async () => {} }));
+    const app = buildTestApp();
+    const res = await app.request('/v1/health/ready');
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: 'ok', db: 'ok', garage: 'ok' });
+  });
+
+  it('returns 503 with garage: "down" when the Garage probe fails', async () => {
+    restores.push(
+      __setGarageForTests({
+        pingGarage: async () => {
+          throw new Error('garage unreachable');
+        },
+      }),
+    );
+    const app = buildTestApp();
+    const res = await app.request('/v1/health/ready');
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ status: 'degraded', db: 'ok', garage: 'down' });
   });
 });

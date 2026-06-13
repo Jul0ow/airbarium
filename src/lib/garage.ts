@@ -8,6 +8,7 @@ import {
   S3Client,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { SPECIMENS_BUCKET } from '@/config/constants';
 import { env } from '@/config/env';
 import { logger } from '@/middleware/logger';
 
@@ -48,6 +49,7 @@ type Impl = {
   deleteObject: (input: DeleteObjectInput) => Promise<void>;
   getPresignedUrl: (input: PresignInput) => Promise<string>;
   listObjects: (input: ListObjectsInput) => Promise<GarageObject[]>;
+  pingGarage: () => Promise<void>;
 };
 
 let client: S3Client | null = null;
@@ -119,6 +121,12 @@ const defaultImpl: Impl = {
     });
   },
 
+  // Readiness probe: a cheap HeadBucket round-trip proving Garage is reachable
+  // and credentials are valid. Throws on any failure (caller maps to 503).
+  async pingGarage() {
+    await getClient().send(new HeadBucketCommand({ Bucket: SPECIMENS_BUCKET }));
+  },
+
   async listObjects({ bucket, prefix }) {
     const s3 = getClient();
     const objects: GarageObject[] = [];
@@ -153,6 +161,7 @@ export const getObject = (input: GetObjectInput) => impl.getObject(input);
 export const deleteObject = (input: DeleteObjectInput) => impl.deleteObject(input);
 export const getPresignedUrl = (input: PresignInput) => impl.getPresignedUrl(input);
 export const listObjects = (input: ListObjectsInput) => impl.listObjects(input);
+export const pingGarage = () => impl.pingGarage();
 
 export function __setGarageForTests(stub: Partial<Impl>): () => void {
   const prev = impl;
