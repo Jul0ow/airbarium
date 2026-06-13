@@ -18,6 +18,7 @@ export async function truncateAll() {
       session,
       account,
       rate_limit,
+      auth_rate_limit,
       plantnet_usage,
       specimens,
       identifications,
