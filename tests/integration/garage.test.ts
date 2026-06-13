@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'bun:test';
-import { getObject, putObject } from '@/lib/garage';
+import { getObject, listObjects, putObject } from '@/lib/garage';
 import { cleanupGarageObjects, setupTestSpecimens, TEST_SPECIMENS_BUCKET } from '../helpers/garage';
 
 beforeAll(async () => {
@@ -33,5 +33,38 @@ describe('lib/garage getObject', () => {
     expect(caught).toBeDefined();
     const name = (caught as { name?: string }).name;
     expect(name === 'NoSuchKey' || name === 'NotFound').toBe(true);
+  });
+});
+
+describe('lib/garage listObjects', () => {
+  it('lists objects under a prefix with their lastModified', async () => {
+    const prefix = `listtest/${crypto.randomUUID()}/`;
+    const keyA = `${prefix}a.bin`;
+    const keyB = `${prefix}b.bin`;
+    const body = new Uint8Array([1, 2, 3]);
+    await putObject({
+      bucket: TEST_SPECIMENS_BUCKET,
+      key: keyA,
+      body,
+      contentType: 'application/octet-stream',
+    });
+    await putObject({
+      bucket: TEST_SPECIMENS_BUCKET,
+      key: keyB,
+      body,
+      contentType: 'application/octet-stream',
+    });
+
+    const out = await listObjects({ bucket: TEST_SPECIMENS_BUCKET, prefix });
+    const keys = out.map((o) => o.key).sort();
+    expect(keys).toEqual([keyA, keyB].sort());
+    for (const o of out) {
+      expect(o.lastModified).toBeInstanceOf(Date);
+    }
+
+    await cleanupGarageObjects([
+      { bucket: TEST_SPECIMENS_BUCKET, key: keyA },
+      { bucket: TEST_SPECIMENS_BUCKET, key: keyB },
+    ]);
   });
 });

@@ -3,6 +3,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   HeadBucketCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
@@ -33,12 +34,20 @@ export type PresignInput = {
   expiresInSeconds: number;
 };
 
+export type GarageObject = { key: string; lastModified: Date };
+
+export type ListObjectsInput = {
+  bucket: string;
+  prefix?: string;
+};
+
 type Impl = {
   ensureBucket: (bucket: string) => Promise<void>;
   putObject: (input: PutObjectInput) => Promise<void>;
   getObject: (input: GetObjectInput) => Promise<Uint8Array>;
   deleteObject: (input: DeleteObjectInput) => Promise<void>;
   getPresignedUrl: (input: PresignInput) => Promise<string>;
+  listObjects: (input: ListObjectsInput) => Promise<GarageObject[]>;
 };
 
 let client: S3Client | null = null;
@@ -109,6 +118,31 @@ const defaultImpl: Impl = {
       expiresIn: expiresInSeconds,
     });
   },
+
+  async listObjects({ bucket, prefix }) {
+    const s3 = getClient();
+    const objects: GarageObject[] = [];
+    let continuationToken: string | undefined;
+    do {
+      const out = await s3.send(
+        new ListObjectsV2Command({
+          Bucket: bucket,
+          Prefix: prefix,
+          ContinuationToken: continuationToken,
+        }),
+      );
+      for (const obj of out.Contents ?? []) {
+        if (obj.Key) {
+          // LastModified is optional in the SDK type but Garage always sets it. The epoch
+          // fallback makes a value-less object look "very old" — fine since the orphan
+          // reconciler only deletes UNREFERENCED objects, never referenced ones.
+          objects.push({ key: obj.Key, lastModified: obj.LastModified ?? new Date(0) });
+        }
+      }
+      continuationToken = out.IsTruncated ? out.NextContinuationToken : undefined;
+    } while (continuationToken);
+    return objects;
+  },
 };
 
 let impl: Impl = defaultImpl;
@@ -118,6 +152,7 @@ export const putObject = (input: PutObjectInput) => impl.putObject(input);
 export const getObject = (input: GetObjectInput) => impl.getObject(input);
 export const deleteObject = (input: DeleteObjectInput) => impl.deleteObject(input);
 export const getPresignedUrl = (input: PresignInput) => impl.getPresignedUrl(input);
+export const listObjects = (input: ListObjectsInput) => impl.listObjects(input);
 
 export function __setGarageForTests(stub: Partial<Impl>): () => void {
   const prev = impl;

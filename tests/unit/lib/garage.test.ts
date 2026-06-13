@@ -4,6 +4,7 @@ import {
   deleteObject,
   ensureBucket,
   getPresignedUrl,
+  listObjects,
   putObject,
 } from '@/lib/garage';
 
@@ -71,6 +72,18 @@ describe('lib/garage swap helper', () => {
     expect(secondCalled).toBe(false);
 
     restoreFirst();
+  });
+
+  it('routes listObjects through the swapped impl', async () => {
+    const stamp = new Date('2026-01-01T00:00:00.000Z');
+    restore = __setGarageForTests({
+      listObjects: async ({ bucket, prefix }) => {
+        return [{ key: `${bucket}/${prefix ?? ''}obj.jpg`, lastModified: stamp }];
+      },
+    });
+
+    const out = await listObjects({ bucket: 'b1', prefix: 'p/' });
+    expect(out).toEqual([{ key: 'b1/p/obj.jpg', lastModified: stamp }]);
   });
 
   it('merges partial stubs over the previous impl', async () => {
