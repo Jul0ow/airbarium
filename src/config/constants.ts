@@ -15,3 +15,9 @@ export const PLANTNET_USAGE_RETENTION_DAYS = 7;
 // lifetime). Otherwise a freshly-uploaded temp identification could be misclassified as
 // an orphan and deleted before its DB row is committed/referenced.
 export const ORPHAN_GRACE_MS = 24 * 60 * 60 * 1000;
+
+// Global API rate limit: 600 requests per 10-minute sliding window per user,
+// bucketed at 1-minute granularity. Backed by Postgres (no Redis in MVP).
+export const GLOBAL_RATE_LIMIT_MAX = 600;
+export const GLOBAL_RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
+export const GLOBAL_RATE_LIMIT_BUCKET_MS = 60 * 1000;
