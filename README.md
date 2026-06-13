@@ -36,7 +36,7 @@ Health check: `curl http://localhost:3000/v1/health` returns `{ "status": "ok", 
 
 ## Status
 
-Lots 1 (Bootstrap), 2 (DB & migrations), 3 (Auth), 4 (Storage), 5 (Identifications), 6 (Specimens online), 7 (Sync offline + retry identify), 8a (RGPD — suppression de compte) et 8b (Cron de purge + réconciliation orphelins) livrés — Hono skeleton, `/v1/health` with DB probe, Drizzle schemas for users/species/identifications/specimens/plantnet_usage/rate_limit, Better Auth wiring with email/password + mailer + bearer plugin, `GET /v1/me`, `PATCH /v1/me`, Garage S3 adapter with presigned URLs, `PUT/DELETE /v1/me/avatar`, `POST /v1/identifications` + `GET /v1/species/:id` with PlantNet + Wikipedia integration and per-user daily quota, `POST/GET/PATCH/DELETE /v1/specimens` + `GET /v1/specimens/stats` with idempotent UUIDv7, threshold-validated promotion, cursor-paginated lists and filters, soft delete, CI with Postgres + Garage services, `POST /v1/specimens` en multipart pour la sync offline avec identification synchrone best-effort + `POST /v1/specimens/:id/identify` pour retry (Lot 7), `DELETE /v1/me` RGPD hard delete avec purge Garage (Lot 8a), worker `bun run cron` one-shot + réconciliation des objets Garage orphelins (Lot 8b). Reste : 8c (rate-limit), 8d (observabilité `/metrics`), 8e (Helm). See the 8-lot roadmap in [`CLAUDE.md`](CLAUDE.md).
+Lots 1 (Bootstrap), 2 (DB & migrations), 3 (Auth), 4 (Storage), 5 (Identifications), 6 (Specimens online), 7 (Sync offline + retry identify), 8a (RGPD — suppression de compte), 8b (Cron de purge + réconciliation orphelins) et 8c (rate limiting Postgres) livrés — Hono skeleton, `/v1/health` with DB probe, Drizzle schemas for users/species/identifications/specimens/plantnet_usage/rate_limit, Better Auth wiring with email/password + mailer + bearer plugin, `GET /v1/me`, `PATCH /v1/me`, Garage S3 adapter with presigned URLs, `PUT/DELETE /v1/me/avatar`, `POST /v1/identifications` + `GET /v1/species/:id` with PlantNet + Wikipedia integration and per-user daily quota, `POST/GET/PATCH/DELETE /v1/specimens` + `GET /v1/specimens/stats` with idempotent UUIDv7, threshold-validated promotion, cursor-paginated lists and filters, soft delete, CI with Postgres + Garage services, `POST /v1/specimens` en multipart pour la sync offline avec identification synchrone best-effort + `POST /v1/specimens/:id/identify` pour retry (Lot 7), `DELETE /v1/me` RGPD hard delete avec purge Garage (Lot 8a), worker `bun run cron` one-shot + réconciliation des objets Garage orphelins (Lot 8b), rate limiting adossé Postgres — limite API globale 600 req / 10 min / user (fenêtre glissante) + limites Better Auth (sign-in/sign-up) persistées en base + nettoyage par le cron (Lot 8c). Reste : 8d (observabilité `/metrics`), 8e (Helm). See the 8-lot roadmap in [`CLAUDE.md`](CLAUDE.md).
 
 ## Lot 3 — Auth quickstart
 
@@ -373,6 +373,8 @@ bun run cron
 | Identifications `temp` expirées | `photo_status='temp'` et `expires_at < now()` | DELETE objet dans le bucket `specimens` |
 | Specimens soft-deleted anciens | `deleted_at < now() - 30 jours` | DELETE objet dans le bucket `specimens` |
 | `plantnet_usage` anciens | `day < current_date - 7 jours` | — |
+| `rate_limit` expirés (limite globale) | `expires_at < now()` | — |
+| `auth_rate_limit` périmés (Better Auth) | `last_request < now() - 1 h` | — |
 
 ### Réconciliation des orphelins Garage
 
@@ -385,3 +387,23 @@ Les erreurs Garage (delete d'un objet individuel, panne de Garage) sont loggées
 - **`exit 0`** — cycle complet sans erreur DB (Garage warn tolérés).
 - **`exit 1`** — au moins une étape DB a échoué (DB inaccessible, contrainte inattendue). Le CronJob k8s retentera selon sa `restartPolicy`.
 - Les métriques Prometheus `/metrics` (histogramme, compteurs purge) seront ajoutées au **Lot 8d**.
+
+## Lot 8c — Rate limiting (adossé Postgres)
+
+Conformément au design (§9.3), tout le rate limiting est adossé à Postgres — pas de Redis en MVP. Deux mécanismes complémentaires :
+
+### Limite API globale (middleware maison)
+
+Toutes les routes authentifiées (`/v1/me`, `/v1/specimens*`, `/v1/identifications`, `/v1/species/:id`) passent par le middleware `globalRateLimit()`, appliqué juste après `authMiddleware()`. Limite : **600 requêtes / 10 min / user**, en **fenêtre glissante à buckets de 1 minute** (table `rate_limit`, clé `global:<user_id>`).
+
+- Comptage *increment-then-check* : la requête courante est comptée avant la décision (les requêtes rejetées consomment aussi le quota, ce qui décourage le matraquage).
+- Dépassement → **429** `RATE_LIMITED` avec en-tête `Retry-After` (secondes).
+- **Fail-open** : si la requête Postgres du limiteur échoue, on logge un `warn` et on laisse passer — une panne du limiteur ne doit pas faire tomber l'API.
+
+### Limites d'authentification (Better Auth)
+
+Les limites sign-in (10 / 15 min) et sign-up (3 / h) de Better Auth sont désormais **persistées en base** (`rateLimit.storage = 'database'`, table `auth_rate_limit`) au lieu d'être en mémoire. Elles restent ainsi correctes même avec plusieurs réplicas d'API (avant, chaque réplica comptait séparément, doublant de fait l'allocation).
+
+### Nettoyage
+
+Les deux tables sont purgées par le cron du Lot 8b (voir le tableau ci-dessus) : `rate_limit` sur `expires_at`, `auth_rate_limit` sur `last_request` au-delà de la plus grande fenêtre Better Auth (1 h). À la suppression de compte (Lot 8a), les lignes `rate_limit` de clé `global:<user_id>` de l'utilisateur sont purgées dans la transaction (elles n'ont pas de FK vers `users`, donc le cascade ne les atteint pas).
