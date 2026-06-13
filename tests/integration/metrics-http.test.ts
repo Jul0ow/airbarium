@@ -45,4 +45,24 @@ describe('HTTP metrics middleware', () => {
     // The raw uuid must never leak into a label (that would explode cardinality).
     expect(text).not.toContain('0192f000-0000-7000-8000-000000000001');
   });
+
+  it('GET /metrics renders the Prometheus exposition', async () => {
+    const app = buildTestApp();
+    const { sessionToken } = await signUpTestUser(app, {
+      email: 'metrics-scrape@example.test',
+      password: 'password1234',
+      name: 'Metrics Scrape',
+    });
+    // One authed request so the histogram has at least one observation.
+    await app.request('/v1/me', { headers: bearerHeaders(sessionToken) });
+
+    const res = await app.request('/metrics');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/plain');
+
+    const text = await res.text();
+    expect(text).toContain('airbarium_http_request_duration_seconds');
+    expect(text).toContain('airbarium_users_total');
+    expect(text).toContain('airbarium_specimens_total');
+  });
 });
