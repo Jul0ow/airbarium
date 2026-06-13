@@ -31,13 +31,12 @@ Health check: `curl http://localhost:3000/v1/health` returns `{ "status": "ok", 
 | `bun run format` | `biome format --write .` |
 | `bun run db:generate` | Generate a Drizzle migration from schema changes |
 | `bun run db:migrate` | Apply migrations to the local DB |
+| `bun run cron` | Worker one-shot : exécute un cycle de purge puis se termine (`exit 0`, ou `exit 1` si une étape DB échoue) |
 | `bun run db:studio` | Open Drizzle Studio |
-
-`cron` is added in later lots.
 
 ## Status
 
-Lots 1 (Bootstrap), 2 (DB & migrations), 3 (Auth), 4 (Storage), 5 (Identifications), 6 (Specimens online), et 7 (Sync offline + retry identify) — Hono skeleton, `/v1/health` with DB probe, Drizzle schemas for users/species/identifications/specimens/plantnet_usage/rate_limit, Better Auth wiring with email/password + mailer + bearer plugin, `GET /v1/me`, `PATCH /v1/me`, Garage S3 adapter with presigned URLs, `PUT/DELETE /v1/me/avatar`, `POST /v1/identifications` + `GET /v1/species/:id` with PlantNet + Wikipedia integration and per-user daily quota, `POST/GET/PATCH/DELETE /v1/specimens` + `GET /v1/specimens/stats` with idempotent UUIDv7, threshold-validated promotion, cursor-paginated lists and filters, soft delete, CI with Postgres + Garage services, `POST /v1/specimens` en multipart pour la sync offline avec identification synchrone best-effort + `POST /v1/specimens/:id/identify` pour retry (Lot 7). See the 8-lot roadmap in [`CLAUDE.md`](CLAUDE.md).
+Lots 1 (Bootstrap), 2 (DB & migrations), 3 (Auth), 4 (Storage), 5 (Identifications), 6 (Specimens online), 7 (Sync offline + retry identify), et 8b (Cron de purge + réconciliation orphelins) — Hono skeleton, `/v1/health` with DB probe, Drizzle schemas for users/species/identifications/specimens/plantnet_usage/rate_limit, Better Auth wiring with email/password + mailer + bearer plugin, `GET /v1/me`, `PATCH /v1/me`, Garage S3 adapter with presigned URLs, `PUT/DELETE /v1/me/avatar`, `POST /v1/identifications` + `GET /v1/species/:id` with PlantNet + Wikipedia integration and per-user daily quota, `POST/GET/PATCH/DELETE /v1/specimens` + `GET /v1/specimens/stats` with idempotent UUIDv7, threshold-validated promotion, cursor-paginated lists and filters, soft delete, CI with Postgres + Garage services, `POST /v1/specimens` en multipart pour la sync offline avec identification synchrone best-effort + `POST /v1/specimens/:id/identify` pour retry (Lot 7), worker `bun run cron` one-shot + réconciliation des objets Garage orphelins (Lot 8b). Reste : 8c (rate-limit), 8d (observabilité `/metrics`), 8e (Helm). See the 8-lot roadmap in [`CLAUDE.md`](CLAUDE.md).
 
 ## Lot 3 — Auth quickstart
 
@@ -330,3 +329,32 @@ curl -X POST http://localhost:3000/v1/specimens/$SID/identify \
 - **Quota** : convention Lot 5 — l'appel PlantNet est compté avant exécution, remboursé uniquement sur erreur ≠ 200 (timeout / 5xx / quota global) ou photo manquante. **Jamais remboursé sur `no_match`** (résultats vides = 200 légitime).
 - **Best-effort en offline** : l'identification synchrone du flux offline ne fait jamais échouer le POST. Toute erreur (PlantNet, quota, ou même une panne DB après l'insert) laisse le specimen en `source='none'`, récupérable via le retry.
 - **Immutabilité** : `/:id/identify` n'est valide que si `identification_source='none'`. Une identification posée ne se remplace pas (409).
+
+## Lot 8b — Cron de purge + réconciliation orphelins
+
+Le worker `bun run cron` est un processus Bun one-shot (process distinct de l'API, même image Docker). Il exécute un seul cycle de purge puis se termine — l'ordonnancement (ex. toutes les heures) est délégué à un **CronJob Kubernetes** (Lot 8e).
+
+```bash
+bun run cron
+# exit 0 sur DB propre, exit 1 si au moins une étape DB a échoué (le CronJob retentera)
+```
+
+### Ce que le cycle purge
+
+| Catégorie | Règle | Garage |
+|---|---|---|
+| Identifications `temp` expirées | `photo_status='temp'` et `expires_at < now()` | DELETE objet dans le bucket `specimens` |
+| Specimens soft-deleted anciens | `deleted_at < now() - 30 jours` | DELETE objet dans le bucket `specimens` |
+| `plantnet_usage` anciens | `day < current_date - 7 jours` | — |
+
+### Réconciliation des orphelins Garage
+
+Après les purges, le worker liste tous les objets dans les buckets `specimens` et `avatars` et supprime ceux qui ne sont référencés par aucune ligne en base (ni `specimens.photo_url`, ni `identifications.photo_url`, ni `users.avatar_url`). Une **fenêtre de grâce de 24 h** protège les uploads en cours (`lastModified` récent → ignoré).
+
+Les erreurs Garage (delete d'un objet individuel, panne de Garage) sont loggées en `warn` et comptées, mais ne font jamais échouer le cycle — un objet orphelin non supprimé sera retenté au prochain passage.
+
+### Codes de sortie et observabilité
+
+- **`exit 0`** — cycle complet sans erreur DB (Garage warn tolérés).
+- **`exit 1`** — au moins une étape DB a échoué (DB inaccessible, contrainte inattendue). Le CronJob k8s retentera selon sa `restartPolicy`.
+- Les métriques Prometheus `/metrics` (histogramme, compteurs purge) seront ajoutées au **Lot 8d**.
