@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { AppEnv } from '@/app-env';
 import { authMiddleware, requireUser } from '@/middleware/auth';
+import { globalRateLimit } from '@/middleware/rate-limit';
 import { ExifFormSchema } from '@/schemas/identifications';
 import { identifyAndStore } from '@/services/identification';
 import { AppError } from '@/utils/errors';
@@ -20,6 +21,7 @@ route.post(
     },
   }),
   authMiddleware(),
+  globalRateLimit(),
   async (c) => {
     const user = requireUser(c);
 

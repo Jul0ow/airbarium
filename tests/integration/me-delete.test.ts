@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { eq } from 'drizzle-orm';
-import { identifications, specimens, users } from '@/db/schema';
+import { identifications, rateLimit, specimens, users } from '@/db/schema';
 import { __setGarageForTests, getObject, putObject } from '@/lib/garage';
 import { uuid7 } from '@/utils/uuid';
 import { buildTestApp } from '../helpers/app';
@@ -140,7 +140,7 @@ describe('DELETE /v1/me', () => {
     }
   });
 
-  it('does not touch another user’s data', async () => {
+  it("does not touch another user's data", async () => {
     const app = buildTestApp();
     const victim = await signUpTestUser(app, {
       email: 'victim@example.com',
@@ -162,5 +162,58 @@ describe('DELETE /v1/me', () => {
     expect(await testDb.select().from(users).where(eq(users.id, bystander.userId))).toHaveLength(1);
     const ok = await app.request('/v1/me', { headers: bearerHeaders(bystander.sessionToken) });
     expect(ok.status).toBe(200);
+  });
+
+  it("purges the global rate-limit rows for the deleted user and leaves other user's rows intact", async () => {
+    const app = buildTestApp();
+    const deleted = await signUpTestUser(app, {
+      email: 'ratelimited@example.com',
+      password: 'correct-horse-battery-staple',
+      name: 'RateLimited',
+    });
+    const other = await signUpTestUser(app, {
+      email: 'other@example.com',
+      password: 'correct-horse-battery-staple',
+      name: 'Other',
+    });
+
+    const now = new Date();
+    const expires = new Date(now.getTime() + 60_000);
+
+    // Seed a rate_limit row for the user being deleted.
+    await testDb.insert(rateLimit).values({
+      key: `global:${deleted.userId}`,
+      windowStart: now,
+      count: 5,
+      expiresAt: expires,
+    });
+
+    // Seed a rate_limit row for a different user to verify scoping.
+    await testDb.insert(rateLimit).values({
+      key: `global:${other.userId}`,
+      windowStart: now,
+      count: 3,
+      expiresAt: expires,
+    });
+
+    const res = await app.request('/v1/me', {
+      method: 'DELETE',
+      headers: bearerHeaders(deleted.sessionToken),
+    });
+    expect(res.status).toBe(204);
+
+    // The deleted user's rate-limit row must be gone.
+    const deletedRows = await testDb
+      .select()
+      .from(rateLimit)
+      .where(eq(rateLimit.key, `global:${deleted.userId}`));
+    expect(deletedRows).toHaveLength(0);
+
+    // The other user's rate-limit row must survive.
+    const otherRows = await testDb
+      .select()
+      .from(rateLimit)
+      .where(eq(rateLimit.key, `global:${other.userId}`));
+    expect(otherRows).toHaveLength(1);
   });
 });

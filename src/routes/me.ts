@@ -4,6 +4,7 @@ import { deleteCookie } from 'hono/cookie';
 import type { AppEnv } from '@/app-env';
 import { authMiddleware, requireUser } from '@/middleware/auth';
 import { jsonBody } from '@/middleware/json-body';
+import { globalRateLimit } from '@/middleware/rate-limit';
 import { PatchMeSchema } from '@/schemas/me';
 import { deleteAccount } from '@/services/account-deletion';
 import { deleteAvatar, uploadAvatar } from '@/services/photo-storage';
@@ -13,11 +14,11 @@ import { JPEG_BODY_LIMIT_BYTES, validateJpeg } from '@/utils/jpeg';
 
 const route = new Hono<AppEnv>();
 
-route.get('/me', authMiddleware(), async (c) => {
+route.get('/me', authMiddleware(), globalRateLimit(), async (c) => {
   return c.json(await getMe(requireUser(c).id));
 });
 
-route.patch('/me', authMiddleware(), ...jsonBody(PatchMeSchema), async (c) => {
+route.patch('/me', authMiddleware(), globalRateLimit(), ...jsonBody(PatchMeSchema), async (c) => {
   const input = c.req.valid('json');
   return c.json(await updateMe(requireUser(c).id, input));
 });
@@ -25,6 +26,7 @@ route.patch('/me', authMiddleware(), ...jsonBody(PatchMeSchema), async (c) => {
 route.put(
   '/me/avatar',
   authMiddleware(),
+  globalRateLimit(),
   bodyLimit({
     maxSize: JPEG_BODY_LIMIT_BYTES,
     onError: () => {
@@ -58,12 +60,12 @@ route.put(
   },
 );
 
-route.delete('/me/avatar', authMiddleware(), async (c) => {
+route.delete('/me/avatar', authMiddleware(), globalRateLimit(), async (c) => {
   await deleteAvatar(requireUser(c).id);
   return c.body(null, 204);
 });
 
-route.delete('/me', authMiddleware(), async (c) => {
+route.delete('/me', authMiddleware(), globalRateLimit(), async (c) => {
   const user = requireUser(c);
   await deleteAccount(user.id, user.email);
   // Real invalidation is the cascade-deleted session row; Bearer clients don't

@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { AVATARS_BUCKET, SPECIMENS_BUCKET } from '@/config/constants';
 import { db } from '@/db/client';
-import { identifications, specimens, users, verification } from '@/db/schema';
+import { identifications, rateLimit, specimens, users, verification } from '@/db/schema';
 import { deleteObject } from '@/lib/garage';
 import { logger } from '@/middleware/logger';
 
@@ -30,6 +30,9 @@ export async function deleteAccount(userId: string, userEmail: string): Promise<
 
     await tx.delete(verification).where(eq(verification.identifier, userEmail));
     await tx.delete(users).where(eq(users.id, userId));
+    // rate_limit rows are keyed by text (`global:<userId>`), with no FK to users,
+    // so the user-delete cascade does NOT remove them — explicit delete required.
+    await tx.delete(rateLimit).where(eq(rateLimit.key, `global:${userId}`));
 
     return {
       specimenKeys: specimenRows.map((r) => r.photoUrl),

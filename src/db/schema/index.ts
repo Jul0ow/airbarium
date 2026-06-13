@@ -1,4 +1,5 @@
 export * from './account';
+export * from './auth-rate-limit';
 export * from './enums';
 export * from './identifications';
 export * from './plantnet-usage';

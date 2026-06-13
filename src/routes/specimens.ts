@@ -4,6 +4,7 @@ import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { AppEnv } from '@/app-env';
 import { authMiddleware, requireUser } from '@/middleware/auth';
+import { globalRateLimit } from '@/middleware/rate-limit';
 import {
   CreateSpecimenSchema,
   ListSpecimensQuerySchema,
@@ -121,6 +122,7 @@ route.post(
     },
   }),
   authMiddleware(),
+  globalRateLimit(),
   async (c) => {
     const user = requireUser(c);
     const ct = (c.req.header('content-type') ?? '').toLowerCase();
@@ -143,6 +145,7 @@ route.post(
 route.get(
   '/specimens',
   authMiddleware(),
+  globalRateLimit(),
   zValidator('query', ListSpecimensQuerySchema),
   async (c) => {
     const user = requireUser(c);
@@ -153,32 +156,32 @@ route.get(
 );
 
 // IMPORTANT: declare /stats BEFORE /:id so Hono does not match :id == 'stats'.
-route.get('/specimens/stats', authMiddleware(), async (c) => {
+route.get('/specimens/stats', authMiddleware(), globalRateLimit(), async (c) => {
   const user = requireUser(c);
   return c.json(await service.stats(user.id), 200);
 });
 
-route.get('/specimens/:id', authMiddleware(), async (c) => {
+route.get('/specimens/:id', authMiddleware(), globalRateLimit(), async (c) => {
   const user = requireUser(c);
   const id = parseSpecimenIdOr404(c.req.param('id'));
   return c.json(await service.getById(user.id, id), 200);
 });
 
-route.patch('/specimens/:id', authMiddleware(), patchValidator, async (c) => {
+route.patch('/specimens/:id', authMiddleware(), globalRateLimit(), patchValidator, async (c) => {
   const user = requireUser(c);
   const id = parseSpecimenIdOr404(c.req.param('id'));
   const body = c.req.valid('json');
   return c.json(await service.patch(user.id, id, body), 200);
 });
 
-route.delete('/specimens/:id', authMiddleware(), async (c) => {
+route.delete('/specimens/:id', authMiddleware(), globalRateLimit(), async (c) => {
   const user = requireUser(c);
   const id = parseSpecimenIdOr404(c.req.param('id'));
   await service.softDelete(user.id, id);
   return c.body(null, 204);
 });
 
-route.post('/specimens/:id/identify', authMiddleware(), async (c) => {
+route.post('/specimens/:id/identify', authMiddleware(), globalRateLimit(), async (c) => {
   const user = requireUser(c);
   const id = parseSpecimenIdOr404(c.req.param('id'));
   return c.json(await service.retryIdentify(user.id, id), 200);
