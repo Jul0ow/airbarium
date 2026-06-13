@@ -37,7 +37,7 @@ Health check: `curl http://localhost:3000/v1/health` returns `{ "status": "ok", 
 
 ## Status
 
-Lots 1 (Bootstrap), 2 (DB & migrations), 3 (Auth), 4 (Storage), 5 (Identifications), 6 (Specimens online), et 7 (Sync offline + retry identify) — Hono skeleton, `/v1/health` with DB probe, Drizzle schemas for users/species/identifications/specimens/plantnet_usage/rate_limit, Better Auth wiring with email/password + mailer + bearer plugin, `GET /v1/me`, `PATCH /v1/me`, Garage S3 adapter with presigned URLs, `PUT/DELETE /v1/me/avatar`, `POST /v1/identifications` + `GET /v1/species/:id` with PlantNet + Wikipedia integration and per-user daily quota, `POST/GET/PATCH/DELETE /v1/specimens` + `GET /v1/specimens/stats` with idempotent UUIDv7, threshold-validated promotion, cursor-paginated lists and filters, soft delete, CI with Postgres + Garage services, `POST /v1/specimens` en multipart pour la sync offline avec identification synchrone best-effort + `POST /v1/specimens/:id/identify` pour retry (Lot 7). See the 8-lot roadmap in [`CLAUDE.md`](CLAUDE.md).
+Lots 1 (Bootstrap), 2 (DB & migrations), 3 (Auth), 4 (Storage), 5 (Identifications), 6 (Specimens online), 7 (Sync offline + retry identify), et 8a (RGPD — suppression de compte) livrés — Hono skeleton, `/v1/health` with DB probe, Drizzle schemas for users/species/identifications/specimens/plantnet_usage/rate_limit, Better Auth wiring with email/password + mailer + bearer plugin, `GET /v1/me`, `PATCH /v1/me`, Garage S3 adapter with presigned URLs, `PUT/DELETE /v1/me/avatar`, `POST /v1/identifications` + `GET /v1/species/:id` with PlantNet + Wikipedia integration and per-user daily quota, `POST/GET/PATCH/DELETE /v1/specimens` + `GET /v1/specimens/stats` with idempotent UUIDv7, threshold-validated promotion, cursor-paginated lists and filters, soft delete, CI with Postgres + Garage services, `POST /v1/specimens` en multipart pour la sync offline avec identification synchrone best-effort + `POST /v1/specimens/:id/identify` pour retry (Lot 7), `DELETE /v1/me` RGPD hard delete avec purge Garage (Lot 8a). Reste du lot 8 (cron 8b, rate-limit 8c, observabilité 8d, Helm 8e) en attente. See the 8-lot roadmap in [`CLAUDE.md`](CLAUDE.md).
 
 ## Lot 3 — Auth quickstart
 
@@ -330,3 +330,30 @@ curl -X POST http://localhost:3000/v1/specimens/$SID/identify \
 - **Quota** : convention Lot 5 — l'appel PlantNet est compté avant exécution, remboursé uniquement sur erreur ≠ 200 (timeout / 5xx / quota global) ou photo manquante. **Jamais remboursé sur `no_match`** (résultats vides = 200 légitime).
 - **Best-effort en offline** : l'identification synchrone du flux offline ne fait jamais échouer le POST. Toute erreur (PlantNet, quota, ou même une panne DB après l'insert) laisse le specimen en `source='none'`, récupérable via le retry.
 - **Immutabilité** : `/:id/identify` n'est valide que si `identification_source='none'`. Une identification posée ne se remplace pas (409).
+
+## Lot 8a — RGPD : suppression de compte
+
+### `DELETE /v1/me` — suppression complète du compte
+
+Hard delete RGPD : supprime toutes les données de l'utilisateur en base (cascade vers specimens, identifications, sessions) puis purge les objets Garage en best-effort. Retourne **204** sans corps.
+
+```bash
+curl -sS -X DELETE http://localhost:3000/v1/me \
+  -H "Authorization: Bearer <token>" -i
+# → 204 No Content
+```
+
+**Ce qui est supprimé :**
+- Ligne `users` (cascade Postgres vers `specimens`, `identifications`, `plantnet_usage`, `account` et `session` Better Auth) ; les lignes `verification` portant l'email sont supprimées explicitement (pas de FK)
+- Les photos Garage référencées en base pour cet utilisateur : objets `specimens/<user_id>/...` de tous ses specimens (**y compris soft-deleted**) et de ses identifications. Les clés sont capturées en base **avant** le cascade puis supprimées une à une (pas de delete par préfixe)
+- L'avatar `avatars/<user_id>.jpg` dans le bucket `avatars`
+
+**Comportement Garage :** la purge Garage est best-effort et hors-transaction. En cas d'erreur S3 (Garage indisponible, objet déjà absent), un `warn` est loggé mais la suppression DB n'est pas annulée. Les éventuels objets orphelins non référencés en base seront réconciliés lors de la mise en place du cron (Lot 8b).
+
+**Session :** le cascade supprime la ligne `session`, donc le token Bearer est immédiatement invalide ; le cookie de session est aussi vidé sur la réponse pour les clients web.
+
+**Codes d'erreur :**
+
+| Status | Cause |
+|---|---|
+| `401` | Pas de session valide |

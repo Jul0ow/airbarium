@@ -1,9 +1,11 @@
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
+import { deleteCookie } from 'hono/cookie';
 import type { AppEnv } from '@/app-env';
 import { authMiddleware, requireUser } from '@/middleware/auth';
 import { jsonBody } from '@/middleware/json-body';
 import { PatchMeSchema } from '@/schemas/me';
+import { deleteAccount } from '@/services/account-deletion';
 import { deleteAvatar, uploadAvatar } from '@/services/photo-storage';
 import { getMe, updateMe } from '@/services/profile';
 import { AppError } from '@/utils/errors';
@@ -58,6 +60,18 @@ route.put(
 
 route.delete('/me/avatar', authMiddleware(), async (c) => {
   await deleteAvatar(requireUser(c).id);
+  return c.body(null, 204);
+});
+
+route.delete('/me', authMiddleware(), async (c) => {
+  const user = requireUser(c);
+  await deleteAccount(user.id, user.email);
+  // Real invalidation is the cascade-deleted session row; Bearer clients don't
+  // send cookies, so deletion is complete once the session row is gone. Clearing
+  // the cookie is cosmetic cleanup for web clients. The __Secure- name requires
+  // { secure: true } or Hono's serialize() throws.
+  deleteCookie(c, 'better-auth.session_token');
+  deleteCookie(c, '__Secure-better-auth.session_token', { secure: true });
   return c.body(null, 204);
 });
 
