@@ -1,12 +1,14 @@
 import { and, eq, isNotNull, lt, sql } from 'drizzle-orm';
 import {
+  AVATARS_BUCKET,
+  ORPHAN_GRACE_MS,
   PLANTNET_USAGE_RETENTION_DAYS,
   SPECIMEN_SOFT_DELETE_RETENTION_DAYS,
   SPECIMENS_BUCKET,
 } from '@/config/constants';
 import { db } from '@/db/client';
-import { identifications, plantnetUsage, specimens } from '@/db/schema';
-import { deleteObject } from '@/lib/garage';
+import { identifications, plantnetUsage, specimens, users } from '@/db/schema';
+import { deleteObject, listObjects } from '@/lib/garage';
 import { logger } from '@/middleware/logger';
 
 export type CategoryResult = {
@@ -102,4 +104,96 @@ export async function purgeOldPlantnetUsage(): Promise<CategoryResult> {
     logger.error({ err }, 'cron.purgeOldPlantnetUsage: db delete failed');
   }
   return res;
+}
+
+export type ReconcileResult = {
+  scanned: number;
+  orphansDeleted: number;
+  garageFailed: number;
+  errored: boolean;
+};
+
+// Reconcile orphaned Garage objects: objects whose key is referenced by no DB
+// row. Runs AFTER the purges, so freshly-purged objects are already gone and we
+// only catch true orphans (failed purge/account-deletion deletes, aborted
+// temp->promoted renames). A grace window protects in-flight uploads.
+export async function reconcileOrphans(): Promise<ReconcileResult> {
+  const res: ReconcileResult = { scanned: 0, orphansDeleted: 0, garageFailed: 0, errored: false };
+  const now = Date.now();
+
+  let buckets: Array<{ bucket: string; refs: Set<string> }>;
+  try {
+    const [specimenRows, identRows, avatarRows] = await Promise.all([
+      db.select({ k: specimens.photoUrl }).from(specimens),
+      db.select({ k: identifications.photoUrl }).from(identifications),
+      db.select({ k: users.avatarUrl }).from(users).where(isNotNull(users.avatarUrl)),
+    ]);
+    // Both specimen photos and identification photos live in the `specimens`
+    // bucket, so their keys share one reference set.
+    const specimensBucketRefs = new Set<string>([...specimenRows, ...identRows].map((r) => r.k));
+    const avatarsRefs = new Set<string>(avatarRows.map((r) => r.k as string));
+    buckets = [
+      { bucket: SPECIMENS_BUCKET, refs: specimensBucketRefs },
+      { bucket: AVATARS_BUCKET, refs: avatarsRefs },
+    ];
+  } catch (err) {
+    // Never delete on an incomplete reference set.
+    res.errored = true;
+    logger.error({ err }, 'cron.reconcileOrphans: failed to build referenced-key set; skipping');
+    return res;
+  }
+
+  for (const { bucket, refs } of buckets) {
+    let objects: Awaited<ReturnType<typeof listObjects>>;
+    try {
+      objects = await listObjects({ bucket });
+    } catch (err) {
+      res.errored = true;
+      logger.error({ err, bucket }, 'cron.reconcileOrphans: listObjects failed; skipping bucket');
+      continue;
+    }
+    res.scanned += objects.length;
+    for (const obj of objects) {
+      if (refs.has(obj.key)) continue;
+      if (now - obj.lastModified.getTime() <= ORPHAN_GRACE_MS) continue;
+      try {
+        await deleteObject({ bucket, key: obj.key });
+        res.orphansDeleted++;
+      } catch (err) {
+        res.garageFailed++;
+        logger.warn({ err, bucket, key: obj.key }, 'cron.reconcileOrphans: orphan delete failed');
+      }
+    }
+  }
+  return res;
+}
+
+export type PurgeCycleResult = {
+  expiredIdentifications: CategoryResult;
+  oldSoftDeletedSpecimens: CategoryResult;
+  oldPlantnetUsage: CategoryResult;
+  orphanReconciliation: ReconcileResult;
+  hadError: boolean;
+};
+
+export async function runPurgeCycle(): Promise<PurgeCycleResult> {
+  logger.info('cron: purge cycle starting');
+  const expiredIdentifications = await purgeExpiredIdentifications();
+  const oldSoftDeletedSpecimens = await purgeOldSoftDeletedSpecimens();
+  const oldPlantnetUsage = await purgeOldPlantnetUsage();
+  const orphanReconciliation = await reconcileOrphans();
+  const hadError =
+    expiredIdentifications.errored ||
+    oldSoftDeletedSpecimens.errored ||
+    oldPlantnetUsage.errored ||
+    orphanReconciliation.errored;
+  const result: PurgeCycleResult = {
+    expiredIdentifications,
+    oldSoftDeletedSpecimens,
+    oldPlantnetUsage,
+    orphanReconciliation,
+    hadError,
+  };
+  logger.info({ result }, 'cron: purge cycle complete');
+  return result;
 }

@@ -6,6 +6,8 @@ import {
   purgeExpiredIdentifications,
   purgeOldPlantnetUsage,
   purgeOldSoftDeletedSpecimens,
+  reconcileOrphans,
+  runPurgeCycle,
 } from '@/services/purge';
 import { uuid7 } from '@/utils/uuid';
 import { setupTestDb, testDb, truncateAll } from '../helpers/db';
@@ -194,5 +196,112 @@ describe('purgeOldPlantnetUsage', () => {
     expect(remaining).toHaveLength(2);
     const days = remaining.map((r) => r.day).sort();
     expect(days).toEqual([isoDaysAgo(7), isoDaysAgo(0)].sort());
+  });
+});
+
+describe('reconcileOrphans', () => {
+  it('deletes old unreferenced objects, keeps referenced and recent ones', async () => {
+    const userId = await makeUser();
+    // referenced by a specimen row
+    const refKey = `${userId}/ref.jpg`;
+    await putObject({ bucket: 'specimens', key: refKey, body: JPEG, contentType: 'image/jpeg' });
+    await testDb
+      .insert(specimens)
+      .values({ id: uuid7(), userId, photoUrl: refKey, collectedAt: new Date() });
+    // two real unreferenced objects
+    const orphanOldKey = `${userId}/orphan-old.jpg`;
+    const orphanRecentKey = `${userId}/orphan-recent.jpg`;
+    await putObject({
+      bucket: 'specimens',
+      key: orphanOldKey,
+      body: JPEG,
+      contentType: 'image/jpeg',
+    });
+    await putObject({
+      bucket: 'specimens',
+      key: orphanRecentKey,
+      body: JPEG,
+      contentType: 'image/jpeg',
+    });
+
+    // Stub only the listing (to control lastModified); deleteObject stays real.
+    const restore = __setGarageForTests({
+      listObjects: async ({ bucket }) => {
+        if (bucket !== 'specimens') return [];
+        return [
+          { key: refKey, lastModified: new Date(Date.now() - 48 * 60 * 60 * 1000) },
+          { key: orphanOldKey, lastModified: new Date(Date.now() - 25 * 60 * 60 * 1000) },
+          { key: orphanRecentKey, lastModified: new Date() },
+        ];
+      },
+    });
+    try {
+      const res = await reconcileOrphans();
+      expect(res.errored).toBe(false);
+      expect(res.orphansDeleted).toBe(1);
+      expect(await objectExists('specimens', orphanOldKey)).toBe(false);
+      expect(await objectExists('specimens', orphanRecentKey)).toBe(true);
+      expect(await objectExists('specimens', refKey)).toBe(true);
+    } finally {
+      restore();
+      await cleanupGarageObjects([
+        { bucket: 'specimens', key: refKey },
+        { bucket: 'specimens', key: orphanRecentKey },
+      ]);
+    }
+  });
+
+  it('deletes nothing and reports errored when listing fails (guard)', async () => {
+    // Covers the per-bucket listObjects-failure path; the DB reference-set-failure
+    // guard (early return before any listing) is covered by code inspection.
+    let deleteCalled = false;
+    const restore = __setGarageForTests({
+      listObjects: async () => {
+        throw new Error('list down');
+      },
+      deleteObject: async () => {
+        deleteCalled = true;
+      },
+    });
+    try {
+      const res = await reconcileOrphans();
+      expect(res.errored).toBe(true);
+      expect(res.orphansDeleted).toBe(0);
+      expect(deleteCalled).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+});
+
+describe('runPurgeCycle', () => {
+  it('runs all steps, aggregates counters, hadError=false on a clean run', async () => {
+    const userId = await makeUser();
+    // one expired identification (will be purged)
+    const idnId = uuid7();
+    const idnKey = `${userId}/${idnId}.jpg`;
+    await putObject({ bucket: 'specimens', key: idnKey, body: JPEG, contentType: 'image/jpeg' });
+    await testDb.insert(identifications).values({
+      id: idnId,
+      userId,
+      photoUrl: idnKey,
+      plantnetRawResponse: { results: [] },
+      photoStatus: 'temp',
+      expiresAt: new Date(Date.now() - 1000),
+    });
+    // one old plantnet_usage row
+    await testDb.insert(plantnetUsage).values({ userId, day: isoDaysAgo(10), count: 2 });
+
+    // Stub listObjects to [] so reconciliation is deterministic (no cross-test scan).
+    const restore = __setGarageForTests({ listObjects: async () => [] });
+    try {
+      const res = await runPurgeCycle();
+      expect(res.hadError).toBe(false);
+      expect(res.expiredIdentifications.rowsDeleted).toBe(1);
+      expect(res.oldPlantnetUsage.rowsDeleted).toBe(1);
+      expect(res.orphanReconciliation.scanned).toBe(0);
+    } finally {
+      restore();
+    }
   });
 });
