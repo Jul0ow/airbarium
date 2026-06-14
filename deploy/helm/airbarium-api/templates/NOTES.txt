@@ -1,0 +1,24 @@
+Airbarium API ({{ .Chart.AppVersion }}) deployed as release "{{ .Release.Name }}".
+
+1. Migrations ran as a pre-install/pre-upgrade hook Job ({{ include "airbarium-api.fullname" . }}-migrate).
+   Check: kubectl -n {{ .Release.Namespace }} get jobs
+
+2. API rollout:
+   kubectl -n {{ .Release.Namespace }} rollout status deployment/{{ include "airbarium-api.fullname" . }}
+
+3. Purge CronJob ({{ include "airbarium-api.fullname" . }}-purge) runs on schedule "{{ .Values.cron.schedule }}".
+
+{{- if .Values.httpRoute.enabled }}
+{{- if .Values.httpRoute.hostnames }}
+4. Exposed via Gateway API HTTPRoute on: {{ join ", " .Values.httpRoute.hostnames }}
+{{- else }}
+4. Exposed via Gateway API HTTPRoute (any hostname accepted by the parentRef Gateway).
+{{- end }}
+{{- else }}
+4. No HTTPRoute (httpRoute.enabled=false). Reach the API in-cluster via Service
+   {{ include "airbarium-api.fullname" . }}:{{ .Values.service.port }}.
+{{- end }}
+
+{{- if not .Values.secret.create }}
+NOTE: secret.create=false — ensure Secret "{{ .Values.secret.existingSecret }}" exists in {{ .Release.Namespace }}.
+{{- end }}
