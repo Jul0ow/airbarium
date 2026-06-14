@@ -28,10 +28,16 @@
             gh
             jq
             curl
+
+            # Deploy tooling (lot 8e)
+            kubernetes-helm
+            kubeconform
+            hadolint
           ];
 
           shellHook = ''
             echo "airbarium dev shell — bun $(bun --version), biome $(biome --version), node $(node --version)"
+            echo "deploy — helm $(helm version --short 2>/dev/null), kubeconform $(kubeconform -v 2>/dev/null), hadolint $(hadolint --version 2>/dev/null)"
           '';
         };
       });

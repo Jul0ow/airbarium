@@ -20,6 +20,10 @@ bun run format           # biome format --write .
 bun run db:generate      # generate Drizzle migration from schema changes
 bun run db:migrate       # apply migrations to local DB
 bun run db:studio        # open Drizzle Studio
+docker build -t airbarium-api .          # build the API + cron image
+hadolint Dockerfile                      # lint the Dockerfile
+helm lint deploy/helm/airbarium-api -f deploy/helm/airbarium-api/ci/values-ci.yaml   # lint the chart
+helm template airbarium deploy/helm/airbarium-api -f deploy/helm/airbarium-api/ci/values-ci.yaml | kubeconform -strict -summary -ignore-missing-schemas
 ```
 
 ## Local dev setup
@@ -72,7 +76,7 @@ Optional: `PUSHGATEWAY_URL` (Lot 8d) — when set, the cron pushes purge metrics
 
 ## 8-lot roadmap
 
-> Statut au 2026-06-14 : lots 1–7 livrés (offline sync mergé). Lot 8 en cours, découpé en sous-lots : 8a (RGPD `DELETE /v1/me` + réconciliation Garage), 8b (cron de purge, `src/cron.ts` + `bun run cron`), 8c (rate limiting Postgres + middleware), 8d (observabilité — `/metrics` Prometheus, sondes `/v1/health` + `/v1/health/ready`, Pushgateway cron) **livrés**. Reste 8e : chart Helm + `CronJob` Kubernetes.
+> Statut au 2026-06-14 : lots 1–7 livrés (offline sync mergé). Lot 8 en cours, découpé en sous-lots : 8a (RGPD `DELETE /v1/me` + réconciliation Garage), 8b (cron de purge, `src/cron.ts` + `bun run cron`), 8c (rate limiting Postgres + middleware), 8d (observabilité — `/metrics` Prometheus, sondes `/v1/health` + `/v1/health/ready`, Pushgateway cron) **livrés**. 8e (chart Helm `deploy/helm/airbarium-api/` + Dockerfile multi-stage + `CronJob` Kubernetes + Job de migration en hook + HTTPRoute Gateway API optionnel) **livré**. MVP backend complet (lots 1–8).
 
 | # | Lot | Depends on |
 |---|-----|-----------|

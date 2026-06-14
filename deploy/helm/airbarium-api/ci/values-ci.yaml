@@ -1,0 +1,35 @@
+# CI-only fixture — every value here is fake. Do NOT use for a real deployment.
+# Used by `helm lint` / `helm template | kubeconform` in CI to exercise all template branches.
+image:
+  repository: ghcr.io/jul0ow/airbarium-api
+  tag: "ci"
+
+config:
+  NODE_ENV: "production"
+  PORT: "3000"
+  LOG_LEVEL: "info"
+  BETTER_AUTH_URL: "https://api.airbarium.app"
+  APP_URL: "https://app.airbarium.app"
+  MAIL_FROM: "Airbarium <noreply@airbarium.app>"
+  GARAGE_ENDPOINT: "http://garage.garage.svc:3900"
+  GARAGE_REGION: "garage"
+  WIKIPEDIA_USER_AGENT: "Airbarium/1.0 (contact@airbarium.app)"
+  PUSHGATEWAY_URL: "http://pushgateway.monitoring.svc:9091"
+
+secret:
+  create: true
+  data:
+    DATABASE_URL: "postgres://airbarium:dev@db.airbarium.svc:5432/airbarium"
+    BETTER_AUTH_SECRET: "ci-secret-32-chars-min-aaaaaaaaaaaaaaaaa"
+    GARAGE_ACCESS_KEY: "GKCI00000000000000000000"
+    GARAGE_SECRET_KEY: "SKCI0000000000000000000000000000000000000000000000000000000000"
+    PLANTNET_API_KEY: "ci-plantnet-key"
+    SMTP_URL: "smtp://mailhog.airbarium.svc:1025"
+
+httpRoute:
+  enabled: true
+  parentRefs:
+    - name: airbarium-gateway
+      namespace: gateway
+  hostnames:
+    - api.airbarium.app

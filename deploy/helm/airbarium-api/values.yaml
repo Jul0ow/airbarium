@@ -1,0 +1,90 @@
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/jul0ow/airbarium-api
+  tag: ""                       # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+api:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+cron:
+  schedule: "0 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 120
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  backoffLimit: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+migrations:
+  enabled: true
+  backoffLimit: 3
+
+service:
+  type: ClusterIP
+  port: 80
+
+httpRoute:
+  enabled: false
+  parentRefs: []                # [{ name, namespace, sectionName }]
+  hostnames: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# Non-sensitive env -> ConfigMap
+config:
+  NODE_ENV: "production"
+  PORT: "3000"
+  LOG_LEVEL: "info"
+  BETTER_AUTH_URL: ""
+  APP_URL: ""
+  MAIL_FROM: "Airbarium <noreply@airbarium.app>"
+  GARAGE_ENDPOINT: ""
+  GARAGE_REGION: "garage"
+  WIKIPEDIA_USER_AGENT: "Airbarium/1.0 (contact@airbarium.app)"
+  PUSHGATEWAY_URL: ""           # optional: omitted from the ConfigMap when empty
+
+# Sensitive env -> Secret. NEVER commit real values.
+secret:
+  create: true
+  existingSecret: ""            # if set, this Secret is referenced instead of creating one
+  data:
+    DATABASE_URL: ""
+    BETTER_AUTH_SECRET: ""
+    GARAGE_ACCESS_KEY: ""
+    GARAGE_SECRET_KEY: ""
+    PLANTNET_API_KEY: ""
+    SMTP_URL: ""

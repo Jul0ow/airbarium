@@ -87,3 +87,23 @@ jobs:
 
       - name: Test
         run: nix develop --command bun test
+
+  helm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+
+      - name: Hadolint
+        run: nix develop --command hadolint Dockerfile
+
+      - name: Helm lint
+        run: nix develop --command helm lint deploy/helm/airbarium-api -f deploy/helm/airbarium-api/ci/values-ci.yaml
+
+      - name: Helm template + kubeconform
+        run: nix develop --command bash -c "helm template airbarium deploy/helm/airbarium-api -f deploy/helm/airbarium-api/ci/values-ci.yaml | kubeconform -strict -summary -ignore-missing-schemas"
