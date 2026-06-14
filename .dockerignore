@@ -1,0 +1,13 @@
+.git
+.github
+.direnv
+result
+node_modules
+tests
+docs
+.claude
+compose
+deploy
+*.md
+.env
+.env.*
