@@ -36,7 +36,7 @@ Health check: `curl http://localhost:3000/v1/health` returns `{ "status": "ok", 
 
 ## Status
 
-Lots 1 (Bootstrap), 2 (DB & migrations), 3 (Auth), 4 (Storage), 5 (Identifications), 6 (Specimens online), 7 (Sync offline + retry identify), 8a (RGPD — suppression de compte), 8b (Cron de purge + réconciliation orphelins) et 8c (rate limiting Postgres) livrés — Hono skeleton, `/v1/health` with DB probe, Drizzle schemas for users/species/identifications/specimens/plantnet_usage/rate_limit, Better Auth wiring with email/password + mailer + bearer plugin, `GET /v1/me`, `PATCH /v1/me`, Garage S3 adapter with presigned URLs, `PUT/DELETE /v1/me/avatar`, `POST /v1/identifications` + `GET /v1/species/:id` with PlantNet + Wikipedia integration and per-user daily quota, `POST/GET/PATCH/DELETE /v1/specimens` + `GET /v1/specimens/stats` with idempotent UUIDv7, threshold-validated promotion, cursor-paginated lists and filters, soft delete, CI with Postgres + Garage services, `POST /v1/specimens` en multipart pour la sync offline avec identification synchrone best-effort + `POST /v1/specimens/:id/identify` pour retry (Lot 7), `DELETE /v1/me` RGPD hard delete avec purge Garage (Lot 8a), worker `bun run cron` one-shot + réconciliation des objets Garage orphelins (Lot 8b), rate limiting adossé Postgres — limite API globale 600 req / 10 min / user (fenêtre glissante) + limites Better Auth (sign-in/sign-up) persistées en base + nettoyage par le cron (Lot 8c), observabilité — endpoint `/metrics` Prometheus (histogramme HTTP, compteurs PlantNet + sync offline, gauges business, métriques process), sonde readiness `/v1/health/ready` (DB + Garage) et push des métriques de purge du cron vers un Pushgateway (Lot 8d). Reste : 8e (Helm + CronJob). See the 8-lot roadmap in [`CLAUDE.md`](CLAUDE.md).
+Lots 1 (Bootstrap), 2 (DB & migrations), 3 (Auth), 4 (Storage), 5 (Identifications), 6 (Specimens online), 7 (Sync offline + retry identify), 8a (RGPD — suppression de compte), 8b (Cron de purge + réconciliation orphelins) et 8c (rate limiting Postgres) livrés — Hono skeleton, `/v1/health` with DB probe, Drizzle schemas for users/species/identifications/specimens/plantnet_usage/rate_limit, Better Auth wiring with email/password + mailer + bearer plugin, `GET /v1/me`, `PATCH /v1/me`, Garage S3 adapter with presigned URLs, `PUT/DELETE /v1/me/avatar`, `POST /v1/identifications` + `GET /v1/species/:id` with PlantNet + Wikipedia integration and per-user daily quota, `POST/GET/PATCH/DELETE /v1/specimens` + `GET /v1/specimens/stats` with idempotent UUIDv7, threshold-validated promotion, cursor-paginated lists and filters, soft delete, CI with Postgres + Garage services, `POST /v1/specimens` en multipart pour la sync offline avec identification synchrone best-effort + `POST /v1/specimens/:id/identify` pour retry (Lot 7), `DELETE /v1/me` RGPD hard delete avec purge Garage (Lot 8a), worker `bun run cron` one-shot + réconciliation des objets Garage orphelins (Lot 8b), rate limiting adossé Postgres — limite API globale 600 req / 10 min / user (fenêtre glissante) + limites Better Auth (sign-in/sign-up) persistées en base + nettoyage par le cron (Lot 8c), observabilité — endpoint `/metrics` Prometheus (histogramme HTTP, compteurs PlantNet + sync offline, gauges business, métriques process), sonde readiness `/v1/health/ready` (DB + Garage) et push des métriques de purge du cron vers un Pushgateway (Lot 8d). chart Helm `deploy/helm/airbarium-api/` (image Docker multi-stage Bun, Deployment API avec sondes liveness/readiness, CronJob de purge, Job de migration en hook pre-install/pre-upgrade, HTTPRoute Gateway API optionnel) + lint CI hadolint/helm/kubeconform (Lot 8e). **MVP backend complet — lots 1 à 8 livrés.** See the 8-lot roadmap in [`CLAUDE.md`](CLAUDE.md).
 
 ## Lot 3 — Auth quickstart
 
@@ -440,3 +440,52 @@ Deux registres prom-client distincts : l'API (`src/lib/metrics.ts`) et le cron (
 ### Métriques du cron (Pushgateway)
 
 Le cron étant un process court non scrapable, il **pousse** ses compteurs de purge vers un Pushgateway quand `PUSHGATEWAY_URL` est défini (job `airbarium-cron`) : `airbarium_purge_rows_deleted{category}`, `airbarium_purge_errored`, `airbarium_purge_last_run_timestamp_seconds`. Un échec de push est loggé et ignoré (ne fait jamais échouer le cron). Variable absente → le cron logge seulement (local/CI/tests).
+
+## Déploiement (Kubernetes)
+
+Le backend se déploie via le chart Helm `deploy/helm/airbarium-api/` (un seul chart : API + CronJob de purge + Job de migration).
+
+### Image Docker
+
+L'API et le cron partagent une image multi-stage Bun :
+
+```bash
+docker build -t ghcr.io/jul0ow/airbarium-api:<tag> .
+docker push ghcr.io/jul0ow/airbarium-api:<tag>
+```
+
+L'image démarre l'API (`bun run start`) ; le CronJob et le Job de migration surchargent la commande (`bun run cron`, `bun run db:migrate`).
+
+### Prérequis cluster (hors chart)
+
+- **PostgreSQL 17** via l'opérateur CloudNativePG (`Cluster` CR) — `DATABASE_URL` pointe vers son Service.
+- **Garage** (S3) via le chart Helm officiel Deuxfleurs — `GARAGE_ENDPOINT`/`GARAGE_*` câblés vers son Service.
+- **Gateway API** : CRD installées + une `Gateway` provisionnée si `httpRoute.enabled=true`.
+- **Prometheus Pushgateway** (optionnel) : `PUSHGATEWAY_URL` pour la collecte des métriques de purge du cron.
+- **Provider SMTP** (Brevo/Postmark/…) : `SMTP_URL`/`MAIL_FROM` (pas de MailHog en prod).
+
+### Installation
+
+Les valeurs sensibles ne sont jamais committées — fournissez-les via un fichier non versionné :
+
+```bash
+helm upgrade --install airbarium deploy/helm/airbarium-api \
+  --namespace airbarium --create-namespace \
+  --set image.tag=<tag> \
+  -f secrets.yaml
+```
+
+Où `secrets.yaml` renseigne au minimum `secret.data.*` (ou `secret.create=false` + `secret.existingSecret=<nom>` pour un Secret géré par sealed-secrets/external-secrets) et les `config.*` (`BETTER_AUTH_URL`, `APP_URL`, `GARAGE_ENDPOINT`, …).
+
+Le Job de migration s'exécute en hook `pre-install`/`pre-upgrade` avant le démarrage des pods API. Les sondes : liveness `/v1/health` (DB), readiness `/v1/health/ready` (DB + Garage).
+
+Toggles utiles : `httpRoute.enabled`, `httpRoute.parentRefs`/`hostnames`, `cron.schedule`, `api.replicaCount`, `migrations.enabled`, `secret.create`/`secret.existingSecret`.
+
+### Vérification du chart
+
+```bash
+hadolint Dockerfile
+helm lint deploy/helm/airbarium-api -f deploy/helm/airbarium-api/ci/values-ci.yaml
+helm template airbarium deploy/helm/airbarium-api -f deploy/helm/airbarium-api/ci/values-ci.yaml \
+  | kubeconform -strict -summary -ignore-missing-schemas
+```
