@@ -6,8 +6,10 @@ import { auth } from '@/auth/better-auth';
 import { authJsonGuard } from '@/middleware/auth-json-guard';
 import { errorHandler } from '@/middleware/error-handler';
 import { httpLogger } from '@/middleware/logger';
+import { metrics } from '@/middleware/metrics';
 import { requestId } from '@/middleware/request-id';
 import { routes } from '@/routes';
+import metricsRoute from '@/routes/metrics';
 import { NotFoundError } from '@/utils/errors';
 
 export const createApp = () => {
@@ -15,6 +17,7 @@ export const createApp = () => {
 
   app.use('*', requestId());
   app.use('*', httpLogger());
+  app.use('*', metrics());
   app.use(
     '*',
     secureHeaders({
@@ -35,6 +38,7 @@ export const createApp = () => {
   app.use('/v1/auth/*', authJsonGuard());
   app.on(['GET', 'POST'], '/v1/auth/*', (c) => auth.handler(c.req.raw));
 
+  app.route('/', metricsRoute);
   app.route('/v1', routes);
 
   app.notFound(() => {

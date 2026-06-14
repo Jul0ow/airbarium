@@ -36,7 +36,7 @@ Health check: `curl http://localhost:3000/v1/health` returns `{ "status": "ok", 
 
 ## Status
 
-Lots 1 (Bootstrap), 2 (DB & migrations), 3 (Auth), 4 (Storage), 5 (Identifications), 6 (Specimens online), 7 (Sync offline + retry identify), 8a (RGPD — suppression de compte), 8b (Cron de purge + réconciliation orphelins) et 8c (rate limiting Postgres) livrés — Hono skeleton, `/v1/health` with DB probe, Drizzle schemas for users/species/identifications/specimens/plantnet_usage/rate_limit, Better Auth wiring with email/password + mailer + bearer plugin, `GET /v1/me`, `PATCH /v1/me`, Garage S3 adapter with presigned URLs, `PUT/DELETE /v1/me/avatar`, `POST /v1/identifications` + `GET /v1/species/:id` with PlantNet + Wikipedia integration and per-user daily quota, `POST/GET/PATCH/DELETE /v1/specimens` + `GET /v1/specimens/stats` with idempotent UUIDv7, threshold-validated promotion, cursor-paginated lists and filters, soft delete, CI with Postgres + Garage services, `POST /v1/specimens` en multipart pour la sync offline avec identification synchrone best-effort + `POST /v1/specimens/:id/identify` pour retry (Lot 7), `DELETE /v1/me` RGPD hard delete avec purge Garage (Lot 8a), worker `bun run cron` one-shot + réconciliation des objets Garage orphelins (Lot 8b), rate limiting adossé Postgres — limite API globale 600 req / 10 min / user (fenêtre glissante) + limites Better Auth (sign-in/sign-up) persistées en base + nettoyage par le cron (Lot 8c). Reste : 8d (observabilité `/metrics`), 8e (Helm). See the 8-lot roadmap in [`CLAUDE.md`](CLAUDE.md).
+Lots 1 (Bootstrap), 2 (DB & migrations), 3 (Auth), 4 (Storage), 5 (Identifications), 6 (Specimens online), 7 (Sync offline + retry identify), 8a (RGPD — suppression de compte), 8b (Cron de purge + réconciliation orphelins) et 8c (rate limiting Postgres) livrés — Hono skeleton, `/v1/health` with DB probe, Drizzle schemas for users/species/identifications/specimens/plantnet_usage/rate_limit, Better Auth wiring with email/password + mailer + bearer plugin, `GET /v1/me`, `PATCH /v1/me`, Garage S3 adapter with presigned URLs, `PUT/DELETE /v1/me/avatar`, `POST /v1/identifications` + `GET /v1/species/:id` with PlantNet + Wikipedia integration and per-user daily quota, `POST/GET/PATCH/DELETE /v1/specimens` + `GET /v1/specimens/stats` with idempotent UUIDv7, threshold-validated promotion, cursor-paginated lists and filters, soft delete, CI with Postgres + Garage services, `POST /v1/specimens` en multipart pour la sync offline avec identification synchrone best-effort + `POST /v1/specimens/:id/identify` pour retry (Lot 7), `DELETE /v1/me` RGPD hard delete avec purge Garage (Lot 8a), worker `bun run cron` one-shot + réconciliation des objets Garage orphelins (Lot 8b), rate limiting adossé Postgres — limite API globale 600 req / 10 min / user (fenêtre glissante) + limites Better Auth (sign-in/sign-up) persistées en base + nettoyage par le cron (Lot 8c), observabilité — endpoint `/metrics` Prometheus (histogramme HTTP, compteurs PlantNet + sync offline, gauges business, métriques process), sonde readiness `/v1/health/ready` (DB + Garage) et push des métriques de purge du cron vers un Pushgateway (Lot 8d). Reste : 8e (Helm + CronJob). See the 8-lot roadmap in [`CLAUDE.md`](CLAUDE.md).
 
 ## Lot 3 — Auth quickstart
 
@@ -386,7 +386,7 @@ Les erreurs Garage (delete d'un objet individuel, panne de Garage) sont loggées
 
 - **`exit 0`** — cycle complet sans erreur DB (Garage warn tolérés).
 - **`exit 1`** — au moins une étape DB a échoué (DB inaccessible, contrainte inattendue). Le CronJob k8s retentera selon sa `restartPolicy`.
-- Les métriques Prometheus `/metrics` (histogramme, compteurs purge) seront ajoutées au **Lot 8d**.
+- En plus des logs, le cron pousse ses compteurs de purge vers un **Pushgateway** Prometheus si `PUSHGATEWAY_URL` est défini (voir Lot 8d). Sans cette variable, les logs structurés restent la seule surface d'observabilité du batch.
 
 ## Lot 8c — Rate limiting (adossé Postgres)
 
@@ -407,3 +407,36 @@ Les limites sign-in (10 / 15 min) et sign-up (3 / h) de Better Auth sont désorm
 ### Nettoyage
 
 Les deux tables sont purgées par le cron du Lot 8b (voir le tableau ci-dessus) : `rate_limit` sur `expires_at`, `auth_rate_limit` sur `last_request` au-delà de la plus grande fenêtre Better Auth (1 h). À la suppression de compte (Lot 8a), les lignes `rate_limit` de clé `global:<user_id>` de l'utilisateur sont purgées dans la transaction (elles n'ont pas de FK vers `users`, donc le cascade ne les atteint pas).
+
+## Lot 8d — Observabilité (`/metrics` + sondes)
+
+Conformément au design (§10) : un endpoint Prometheus et des sondes liveness/readiness à la Kubernetes.
+
+### Endpoints
+
+| Méthode | Route | Auth | Rôle |
+|---|---|---|---|
+| GET | `/metrics` | public | Exposition Prometheus (hors `/v1`, scrapé dans le cluster) |
+| GET | `/v1/health` | public | **Liveness** — sonde Postgres seul (inchangé). Un blip Garage/PlantNet ne redémarre pas le pod |
+| GET | `/v1/health/ready` | public | **Readiness** — sonde DB **+** Garage, `503` si l'un est down (retire le pod de l'ingress) |
+
+```bash
+curl http://localhost:3000/metrics
+curl http://localhost:3000/v1/health/ready   # { "status": "ok", "db": "ok", "garage": "ok" }
+```
+
+### Métriques exposées (`/metrics`, préfixe `airbarium_`)
+
+| Métrique | Type | Labels | Sens |
+|---|---|---|---|
+| `airbarium_http_request_duration_seconds` | Histogram | `method`, `route`, `status_code` | Latence HTTP. Le label `route` est le **motif** de route (`/v1/specimens/:id`), jamais le chemin brut — cardinalité bornée. Son `_count` sert aussi de compteur par status |
+| `airbarium_plantnet_requests_total` | Counter | `outcome` = `success`/`no_match`/`error`/`quota_exceeded` | Issues des identifications PlantNet. `quota_exceeded` = quota 30/jour/user atteint |
+| `airbarium_sync_ingest_total` | Counter | `result` = `identified`/`unidentified` | Spécimens ingérés via la sync offline, par résultat d'identification |
+| `airbarium_users_total`, `airbarium_specimens_total` | Gauge | — | Totaux non-supprimés, calculés au scrape (`COUNT(*)`). Pour l'activité « du jour », utiliser `increase(<compteur>[1d])` côté PromQL — pas de gauge à reset journalier |
+| `process_*`, `nodejs_*` | — | — | Métriques process/Node par défaut (`collectDefaultMetrics`) |
+
+Deux registres prom-client distincts : l'API (`src/lib/metrics.ts`) et le cron (`src/lib/cron-metrics.ts`), pour que le batch court ne tire jamais les collecteurs HTTP/business de l'API.
+
+### Métriques du cron (Pushgateway)
+
+Le cron étant un process court non scrapable, il **pousse** ses compteurs de purge vers un Pushgateway quand `PUSHGATEWAY_URL` est défini (job `airbarium-cron`) : `airbarium_purge_rows_deleted{category}`, `airbarium_purge_errored`, `airbarium_purge_last_run_timestamp_seconds`. Un échec de push est loggé et ignoré (ne fait jamais échouer le cron). Variable absente → le cron logge seulement (local/CI/tests).

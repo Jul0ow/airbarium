@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import { DAILY_PLANTNET_QUOTA } from '@/config/constants';
 import { plantnetUsage, specimens, users } from '@/db/schema';
 import { __setGarageForTests } from '@/lib/garage';
+import { register } from '@/lib/metrics';
 import { flushPendingEnrichments } from '@/services/species-enrichment';
 import * as service from '@/services/specimens';
 import type { AppError } from '@/utils/errors';
@@ -159,6 +160,28 @@ describe('service.create offline — idempotence', () => {
       expect((e as AppError).status).toBe(409);
       expect((e as AppError).code).toBe('ID_CONFLICT');
     }
+  });
+});
+
+describe('service.create offline — sync ingest metric', () => {
+  it('records result=identified when PlantNet matches', async () => {
+    const uid = await makeUser();
+    restores.push(installMockPlantnet());
+    register.resetMetrics();
+    await service.create(uid, offlineInput(uuid7()));
+    expect(await register.metrics()).toContain(
+      'airbarium_sync_ingest_total{result="identified"} 1',
+    );
+  });
+
+  it('records result=unidentified when identification fails', async () => {
+    const uid = await makeUser();
+    restores.push(installMockPlantnet({ fail: 'timeout' }));
+    register.resetMetrics();
+    await service.create(uid, offlineInput(uuid7()));
+    expect(await register.metrics()).toContain(
+      'airbarium_sync_ingest_total{result="unidentified"} 1',
+    );
   });
 });
 

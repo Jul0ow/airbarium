@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { register } from '@/lib/metrics';
 import {
   identify,
   PlantnetQuotaExhaustedError,
@@ -130,5 +131,35 @@ describe('identify', () => {
     });
 
     await expect(identify(jpeg, { timeoutMs: 5 })).rejects.toBeInstanceOf(PlantnetTimeoutError);
+  });
+});
+
+describe('identify metrics', () => {
+  beforeEach(() => {
+    register.resetMetrics();
+  });
+
+  it('records outcome=success on a match', async () => {
+    mockFetch(() => new Response(JSON.stringify(LYCORIS), { status: 200 }));
+    await identify(jpeg);
+    expect(await register.metrics()).toContain(
+      'airbarium_plantnet_requests_total{outcome="success"} 1',
+    );
+  });
+
+  it('records outcome=no_match on empty results', async () => {
+    mockFetch(() => new Response(JSON.stringify({ results: [] }), { status: 200 }));
+    await identify(jpeg);
+    expect(await register.metrics()).toContain(
+      'airbarium_plantnet_requests_total{outcome="no_match"} 1',
+    );
+  });
+
+  it('records outcome=error on an upstream failure', async () => {
+    mockFetch(() => new Response('boom', { status: 500 }));
+    await expect(identify(jpeg)).rejects.toBeInstanceOf(PlantnetUnavailableError);
+    expect(await register.metrics()).toContain(
+      'airbarium_plantnet_requests_total{outcome="error"} 1',
+    );
   });
 });

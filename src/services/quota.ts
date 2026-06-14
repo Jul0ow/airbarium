@@ -2,6 +2,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import { DAILY_PLANTNET_QUOTA } from '@/config/constants';
 import { db } from '@/db/client';
 import { plantnetUsage } from '@/db/schema';
+import { recordPlantnet } from '@/lib/metrics';
 import { AppError } from '@/utils/errors';
 
 // Quota window is per-UTC-day. Users in non-UTC timezones see the reset at
@@ -27,6 +28,7 @@ export async function incrementOrThrow(userId: string): Promise<void> {
 
   if (row.count > DAILY_PLANTNET_QUOTA) {
     await refund(userId);
+    recordPlantnet('quota_exceeded');
     throw new AppError(
       'QUOTA_EXCEEDED',
       `Daily PlantNet quota of ${DAILY_PLANTNET_QUOTA} identifications exceeded`,
