@@ -1,6 +1,7 @@
 import type { MiddlewareHandler } from 'hono';
 import type { AppEnv } from '@/app-env';
 import { GLOBAL_RATE_LIMIT_MAX, GLOBAL_RATE_LIMIT_WINDOW_MS } from '@/config/constants';
+import { recordRateLimitFailOpen } from '@/lib/metrics';
 import { checkGlobalRateLimit } from '@/services/rate-limit';
 import { AppError } from '@/utils/errors';
 import { requireUser } from './auth';
@@ -11,7 +12,9 @@ export const globalRateLimit = (): MiddlewareHandler<AppEnv> => async (c, next) 
   try {
     result = await checkGlobalRateLimit(user.id);
   } catch (err) {
-    // FAIL-OPEN: a rate-limiter outage must not take down the API.
+    // FAIL-OPEN: a rate-limiter outage must not take down the API. Surface it as
+    // a metric so a degraded rate_limit table (abuse protection down) is alertable.
+    recordRateLimitFailOpen();
     c.get('log').warn({ err, userId: user.id }, 'rate-limit: check failed, allowing (fail-open)');
     await next();
     return;

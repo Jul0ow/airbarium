@@ -33,3 +33,10 @@ httpRoute:
       namespace: gateway
   hostnames:
     - api.airbarium.app
+
+networkPolicy:
+  enabled: true
+  gatewayNamespaceSelector:
+    kubernetes.io/metadata.name: gateway
+  scrapeNamespaceSelector:
+    kubernetes.io/metadata.name: monitoring

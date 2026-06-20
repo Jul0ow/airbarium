@@ -15,3 +15,8 @@ garage-meta/
 garage-data/
 
 .claude/scheduled_tasks.lock
+
+# Helm secret overrides — never commit real secret values (use existingSecret in prod)
+*.secret.yaml
+values-prod.yaml
+values-secrets.yaml

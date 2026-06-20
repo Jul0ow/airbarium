@@ -33,10 +33,20 @@ const syncIngest = new Counter({
   registers: [register],
 });
 
+const rateLimitFailOpen = new Counter({
+  name: 'airbarium_rate_limit_fail_open_total',
+  help: 'Times the global rate-limiter failed open (allowed a request after a limiter error). Should normally stay flat; a rising value means the rate_limit table is unhealthy and abuse protection is degraded — alert on it.',
+  registers: [register],
+});
+
 export type PlantnetOutcome = 'success' | 'no_match' | 'error' | 'quota_exceeded';
 
 export function recordPlantnet(outcome: PlantnetOutcome): void {
   plantnetRequests.inc({ outcome });
+}
+
+export function recordRateLimitFailOpen(): void {
+  rateLimitFailOpen.inc();
 }
 
 export type SyncIngestResult = 'identified' | 'unidentified';

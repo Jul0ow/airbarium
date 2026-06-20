@@ -37,6 +37,11 @@ export const auth = betterAuth({
     // Spec §2: verification email is sent, but sign-in is not gated on it.
     // Explicit so an upstream default change can't silently flip behavior.
     requireEmailVerification: false,
+    // Pin the password policy explicitly rather than inheriting Better Auth's
+    // defaults (min 8): 10 raises the floor, and the max bounds Argon2 work per
+    // request (anti-DoS on the unauthenticated sign-up/reset routes).
+    minPasswordLength: 10,
+    maxPasswordLength: 128,
     password: {
       hash: async (pw) => Bun.password.hash(pw, { algorithm: 'argon2id' }),
       verify: async ({ hash, password }) => Bun.password.verify(password, hash),
