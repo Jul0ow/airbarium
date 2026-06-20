@@ -13,7 +13,13 @@ spec:
     {{- toYaml . | nindent 4 }}
   {{- end }}
   rules:
-    - backendRefs:
+    - matches:
+        {{- range .Values.httpRoute.pathPrefixes }}
+        - path:
+            type: PathPrefix
+            value: {{ . | quote }}
+        {{- end }}
+      backendRefs:
         - name: {{ include "airbarium-api.fullname" . }}
           port: {{ .Values.service.port }}
 {{- end }}

@@ -63,6 +63,8 @@ spec:
                 name: {{ include "airbarium-api.fullname" . }}-migrate
             - secretRef:
                 name: {{ if .Values.secret.create }}{{ include "airbarium-api.fullname" . }}-migrate{{ else }}{{ required "secret.existingSecret is required when secret.create=false" .Values.secret.existingSecret }}{{ end }}
+          resources:
+            {{- toYaml .Values.migrations.resources | nindent 12 }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
           {{- if .Values.securityContext.readOnlyRootFilesystem }}

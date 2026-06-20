@@ -39,6 +39,13 @@ cron:
 migrations:
   enabled: true
   backoffLimit: 3
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
 
 service:
   type: ClusterIP
@@ -48,14 +55,41 @@ httpRoute:
   enabled: false
   parentRefs: []                # [{ name, namespace, sectionName }]
   hostnames: []
+  # Only these path prefixes are routed publicly. Keep it to the versioned API so
+  # / and /metrics are NOT reachable through the Gateway (metrics has no app auth).
+  pathPrefixes:
+    - /v1
+
+# Default-deny NetworkPolicy (defense in depth). Disabled by default because it
+# requires knowing the cluster's Gateway namespace; enable + fill in for prod.
+networkPolicy:
+  enabled: false
+  # Namespace label selector of the Gateway/ingress that may reach the API on http.
+  gatewayNamespaceSelector: {}  # e.g. { kubernetes.io/metadata.name: gateway }
+  # Namespace label selector allowed to scrape /metrics (Prometheus). When empty,
+  # no scrape ingress rule is emitted (lock /metrics down entirely).
+  scrapeNamespaceSelector: {}   # e.g. { kubernetes.io/metadata.name: monitoring }
+  # Extra egress rules (raw NetworkPolicyEgressRule items) for in-cluster
+  # Postgres/Garage/SMTP, etc. DNS (53) and TCP/443 egress are always allowed.
+  extraEgress: []
 
 serviceAccount:
   create: true
   name: ""
   annotations: {}
 
+# The API and cron never call the Kubernetes API, so don't mount its token.
+automountServiceAccountToken: false
+
 podSecurityContext:
   runAsNonRoot: true
+  # oven/bun image's `bun` user is UID/GID 1000; pin numerically so the kubelet
+  # can enforce runAsNonRoot without resolving the image's USER name.
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
 
 securityContext:
   allowPrivilegeEscalation: false
@@ -77,7 +111,12 @@ config:
   WIKIPEDIA_USER_AGENT: "Airbarium/1.0 (contact@airbarium.app)"
   PUSHGATEWAY_URL: ""           # optional: omitted from the ConfigMap when empty
 
-# Sensitive env -> Secret. NEVER commit real values.
+# Sensitive env -> Secret.
+# A k8s Secret is only base64, NOT encryption. For real deployments prefer NOT
+# letting this chart materialize secrets: set create=false and point
+# existingSecret at a Secret managed out-of-band (SealedSecrets / External-Secrets
+# / Vault). If you must inline values, put them in an un-committed -f overrides
+# file (see .gitignore: *.secret.yaml / values-prod.yaml), never in this file.
 secret:
   create: true
   existingSecret: ""            # if set, this Secret is referenced instead of creating one

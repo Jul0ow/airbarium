@@ -25,3 +25,8 @@ export const GLOBAL_RATE_LIMIT_BUCKET_MS = 60 * 1000;
 // Auth rate-limit rows older than the largest Better Auth window (sign-up = 1h)
 // can no longer affect any limit decision, so the cron may safely delete them.
 export const AUTH_RATE_LIMIT_MAX_WINDOW_MS = 60 * 60 * 1000;
+
+// Max body size for the unauthenticated /v1/auth/* routes. These accept only
+// small JSON payloads (email/password/name), so a tight 64 KiB cap closes the
+// memory-DoS vector of an unbounded body being buffered before auth runs.
+export const AUTH_BODY_LIMIT_BYTES = 64 * 1024;
