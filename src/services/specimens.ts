@@ -724,9 +724,15 @@ async function recoverFromPkViolation(
 // postgres.js surfaces Postgres errors as objects with `.code` and
 // `.constraint_name`. 23505 is unique_violation; we only recover on the
 // specimens PK (other unique constraints, if added later, should not silently
-// turn into idempotent replays).
+// turn into idempotent replays). Drizzle wraps driver errors in a
+// DrizzleQueryError with the original pg error on `.cause`, so we inspect both
+// the thrown error and its cause.
 function isUniquePkViolation(err: unknown): boolean {
-  if (!err || typeof err !== 'object') return false;
-  const e = err as { code?: unknown; constraint_name?: unknown };
-  return e.code === '23505' && e.constraint_name === 'specimens_pkey';
+  for (const e of [err, (err as { cause?: unknown } | null)?.cause]) {
+    if (e && typeof e === 'object') {
+      const pe = e as { code?: unknown; constraint_name?: unknown };
+      if (pe.code === '23505' && pe.constraint_name === 'specimens_pkey') return true;
+    }
+  }
+  return false;
 }

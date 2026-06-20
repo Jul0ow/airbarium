@@ -88,6 +88,33 @@ describe('POST /v1/auth/sign-up/email', () => {
     expect(res.status).toBeGreaterThanOrEqual(400);
   });
 
+  it('rejects a password shorter than the explicit 10-char minimum', async () => {
+    // 9 chars: would pass Better Auth's default min-8, must fail our min-10 policy.
+    const app = buildTestApp();
+    const res = await app.request('/v1/auth/sign-up/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'nine@example.com', password: 'ninechars', name: 'X' }),
+    });
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(
+      await testDb.select().from(users).where(eq(users.email, 'nine@example.com')),
+    ).toHaveLength(0);
+  });
+
+  it('returns 413 when the auth request body exceeds the 64 KiB limit', async () => {
+    const app = buildTestApp();
+    const huge = 'a'.repeat(70 * 1024);
+    const res = await app.request('/v1/auth/sign-up/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'big@example.com', password: 'correct-horse', name: huge }),
+    });
+    expect(res.status).toBe(413);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe('PAYLOAD_TOO_LARGE');
+  });
+
   it('returns 400 with BA error shape for malformed JSON', async () => {
     const app = buildTestApp();
     const res = await app.request('/v1/auth/sign-up/email', {

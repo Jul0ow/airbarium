@@ -161,6 +161,30 @@ describe('service.create offline — idempotence', () => {
       expect((e as AppError).code).toBe('ID_CONFLICT');
     }
   });
+
+  it('concurrent creates with the same id: PK violation recovers to an idempotent replay', async () => {
+    // Exercises recoverFromPkViolation: the loser of the insert race hits the
+    // specimens_pkey 23505, re-runs the idempotent SELECT and replays instead of
+    // surfacing a 500. Exactly one row must exist and exactly one call reports
+    // wasCreated.
+    const uid = await makeUser();
+    restores.push(installMockPlantnet());
+    const id = uuid7();
+
+    const [a, b] = await Promise.all([
+      service.create(uid, offlineInput(id)),
+      service.create(uid, offlineInput(id)),
+    ]);
+
+    const created = [a, b].filter((r) => r.wasCreated);
+    const replayed = [a, b].filter((r) => !r.wasCreated);
+    expect(created).toHaveLength(1);
+    expect(replayed).toHaveLength(1);
+    expect(replayed[0]?.specimen.id).toBe(id);
+
+    const rows = await testDb.select().from(specimens).where(eq(specimens.id, id));
+    expect(rows).toHaveLength(1);
+  });
 });
 
 describe('service.create offline — sync ingest metric', () => {

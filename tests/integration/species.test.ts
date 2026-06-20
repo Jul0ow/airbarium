@@ -40,6 +40,23 @@ describe('GET /v1/species/:id', () => {
     expect(body.error.code).toBe('NOT_FOUND');
   });
 
+  it('returns 404 SPECIES_NOT_FOUND for a malformed (non-UUID) id', async () => {
+    const app = buildTestApp();
+    const u = await signUpTestUser(app, {
+      email: 's-bad@example.com',
+      password: 'correct-horse-battery-staple',
+      name: 'Sbad',
+    });
+    // A non-UUID id must be rejected at the route (404), never reach the uuid
+    // column (which would raise Postgres 22P02 -> 500).
+    const res = await app.request('/v1/species/not-a-uuid', {
+      headers: bearerHeaders(u.sessionToken),
+    });
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe('SPECIES_NOT_FOUND');
+  });
+
   it('returns full species response when description set', async () => {
     const app = buildTestApp();
     const u = await signUpTestUser(app, {

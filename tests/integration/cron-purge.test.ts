@@ -398,4 +398,21 @@ describe('runPurgeCycle', () => {
       restore();
     }
   });
+
+  it('hadError=true when a step fails (drives the cron process.exit(1) signal)', async () => {
+    // A failing reconciliation (listObjects throws) marks that step errored; the
+    // cycle must propagate it via hadError so src/cron.ts exits non-zero.
+    const restore = __setGarageForTests({
+      listObjects: async () => {
+        throw new Error('garage list down');
+      },
+    });
+    try {
+      const res = await runPurgeCycle();
+      expect(res.orphanReconciliation.errored).toBe(true);
+      expect(res.hadError).toBe(true);
+    } finally {
+      restore();
+    }
+  });
 });
