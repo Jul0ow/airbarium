@@ -46,8 +46,9 @@ const defaultImpl: Impl = {
         headers: { 'User-Agent': env.WIKIPEDIA_USER_AGENT },
         signal: controller.signal,
       });
-    } catch (err) {
-      if ((err as Error).name === 'AbortError') throw new WikipediaUnavailableError(0);
+    } catch {
+      // Network failure or timeout (AbortError): enrichment is best-effort, so
+      // both map to the same "unavailable" outcome the caller swallows.
       throw new WikipediaUnavailableError(0);
     } finally {
       clearTimeout(t);

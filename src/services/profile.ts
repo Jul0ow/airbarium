@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { type User, users } from '@/db/schema';
 import { presignAvatar } from '@/services/photo-storage';
+import { AppError } from '@/utils/errors';
 
 export type ProfileResponse = {
   id: string;
@@ -25,7 +26,7 @@ async function toResponse(u: User): Promise<ProfileResponse> {
 
 export async function getMe(userId: string): Promise<ProfileResponse> {
   const [row] = await db.select().from(users).where(eq(users.id, userId));
-  if (!row) throw new Error(`profile.getMe: user ${userId} not found`);
+  if (!row) throw new AppError('INVARIANT', `profile.getMe: user ${userId} not found`, 500);
   return toResponse(row);
 }
 
@@ -36,6 +37,6 @@ export async function updateMe(
   const set: { updatedAt: Date; name?: string } = { updatedAt: new Date() };
   if (patch.name !== undefined) set.name = patch.name;
   const [row] = await db.update(users).set(set).where(eq(users.id, userId)).returning();
-  if (!row) throw new Error(`profile.updateMe: user ${userId} not found`);
+  if (!row) throw new AppError('INVARIANT', `profile.updateMe: user ${userId} not found`, 500);
   return toResponse(row);
 }

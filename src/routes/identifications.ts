@@ -5,8 +5,8 @@ import { authMiddleware, requireUser } from '@/middleware/auth';
 import { globalRateLimit } from '@/middleware/rate-limit';
 import { ExifFormSchema } from '@/schemas/identifications';
 import { identifyAndStore } from '@/services/identification';
-import { AppError } from '@/utils/errors';
-import { JPEG_BODY_LIMIT_BYTES, validateJpeg } from '@/utils/jpeg';
+import { AppError, zodIssues } from '@/utils/errors';
+import { JPEG_BODY_LIMIT_BYTES, readJpegUpload } from '@/utils/jpeg';
 
 const route = new Hono<AppEnv>();
 
@@ -31,18 +31,7 @@ route.post(
     }
 
     const form = await c.req.parseBody();
-    const photo = form.photo;
-    if (!(photo instanceof File)) {
-      throw new AppError('MISSING_FIELD', 'photo field is required', 400);
-    }
-    if (photo.type !== 'image/jpeg') {
-      throw new AppError('INVALID_CONTENT_TYPE', 'photo must be image/jpeg', 400, {
-        received: photo.type,
-      });
-    }
-
-    const buffer = new Uint8Array(await photo.arrayBuffer());
-    validateJpeg(buffer);
+    const buffer = await readJpegUpload(form.photo);
 
     const exifInput: Record<string, string | undefined> = {};
     if (typeof form.date_taken === 'string') exifInput.date_taken = form.date_taken;
@@ -51,9 +40,7 @@ route.post(
 
     const parsed = ExifFormSchema.safeParse(exifInput);
     if (!parsed.success) {
-      throw new AppError('INVALID_EXIF', 'Invalid EXIF form fields', 400, {
-        issues: parsed.error.issues.map((i) => ({ path: i.path, message: i.message })),
-      });
+      throw new AppError('INVALID_EXIF', 'Invalid EXIF form fields', 400, zodIssues(parsed.error));
     }
 
     const out = await identifyAndStore(user.id, buffer, parsed.data);

@@ -12,8 +12,9 @@ import {
 } from '@/schemas/specimens';
 import { CreateSpecimenOfflineFormSchema } from '@/schemas/specimens-offline';
 import * as service from '@/services/specimens';
-import { AppError, ValidationError } from '@/utils/errors';
-import { JPEG_BODY_LIMIT_BYTES, validateJpeg } from '@/utils/jpeg';
+import { AppError, ValidationError, zodIssues } from '@/utils/errors';
+import { parseUuidOr404 } from '@/utils/http';
+import { JPEG_BODY_LIMIT_BYTES, readJpegUpload } from '@/utils/jpeg';
 
 const route = new Hono<AppEnv>();
 
@@ -21,23 +22,11 @@ const route = new Hono<AppEnv>();
 // unknown paths under `/v1/*` fall through to the global 404 handler instead
 // of being intercepted as 401 by this sub-app's wildcard.
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 // Malformed `:id` returns 404 SPECIMEN_NOT_FOUND (not 400) so the route reads
 // uniformly: "this URL does not address a specimen of yours" regardless of
 // whether the id is invalid, unknown, or owned by someone else.
-const parseSpecimenIdOr404 = (raw: string): string => {
-  if (!UUID_RE.test(raw)) {
-    throw new AppError('SPECIMEN_NOT_FOUND', `specimen ${raw} not found`, 404);
-  }
-  return raw;
-};
-
-const issuesPayload = (
-  issues: Array<{ path: ReadonlyArray<PropertyKey>; code: string; message: string }>,
-) => ({
-  issues: issues.map((i) => ({ path: i.path, code: i.code, message: i.message })),
-});
+const parseSpecimenIdOr404 = (raw: string): string =>
+  parseUuidOr404(raw, 'SPECIMEN_NOT_FOUND', `specimen ${raw} not found`);
 
 async function handleJsonCreate(c: Context<AppEnv>, userId: string) {
   let raw: unknown;
@@ -56,27 +45,17 @@ async function handleJsonCreate(c: Context<AppEnv>, userId: string) {
         'OFFLINE_SOURCE_NOT_ALLOWED',
         'identification_source must be plantnet_auto or plantnet_picked',
         400,
-        issuesPayload(result.error.issues),
+        zodIssues(result.error),
       );
     }
-    throw new ValidationError('Invalid request body', issuesPayload(result.error.issues));
+    throw new ValidationError('Invalid request body', zodIssues(result.error));
   }
   return service.create(userId, result.data);
 }
 
 async function handleMultipartCreate(c: Context<AppEnv>, userId: string) {
   const form = await c.req.parseBody();
-  const photo = form.photo;
-  if (!(photo instanceof File)) {
-    throw new AppError('MISSING_FIELD', 'photo field is required', 400);
-  }
-  if (photo.type !== 'image/jpeg') {
-    throw new AppError('INVALID_CONTENT_TYPE', 'photo must be image/jpeg', 400, {
-      received: photo.type,
-    });
-  }
-  const buffer = new Uint8Array(await photo.arrayBuffer());
-  validateJpeg(buffer);
+  const buffer = await readJpegUpload(form.photo);
 
   const fields: Record<string, string> = {};
   for (const [k, v] of Object.entries(form)) {
@@ -84,7 +63,7 @@ async function handleMultipartCreate(c: Context<AppEnv>, userId: string) {
   }
   const result = CreateSpecimenOfflineFormSchema.safeParse(fields);
   if (!result.success) {
-    throw new ValidationError('Invalid request body', issuesPayload(result.error.issues));
+    throw new ValidationError('Invalid request body', zodIssues(result.error));
   }
 
   return service.create(userId, {
@@ -107,10 +86,10 @@ const patchValidator = zValidator('json', PatchSpecimenSchema, (result) => {
       'INVALID_PATCH',
       'at least one of user_notes / location_label is required',
       400,
-      issuesPayload(result.error.issues),
+      zodIssues(result.error),
     );
   }
-  throw new ValidationError('Invalid request body', issuesPayload(result.error.issues));
+  throw new ValidationError('Invalid request body', zodIssues(result.error));
 });
 
 route.post(

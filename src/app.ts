@@ -4,7 +4,7 @@ import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import type { AppEnv } from '@/app-env';
 import { auth } from '@/auth/better-auth';
-import { AUTH_BODY_LIMIT_BYTES } from '@/config/constants';
+import { AUTH_BODY_LIMIT_BYTES, CLIENT_ORIGINS } from '@/config/constants';
 import { authJsonGuard } from '@/middleware/auth-json-guard';
 import { errorHandler } from '@/middleware/error-handler';
 import { httpLogger } from '@/middleware/logger';
@@ -31,7 +31,7 @@ export const createApp = () => {
   app.use(
     '*',
     cors({
-      origin: ['http://localhost:8081', 'http://localhost:19006', 'https://app.airbarium.app'],
+      origin: CLIENT_ORIGINS,
       credentials: true,
       allowMethods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'],
     }),

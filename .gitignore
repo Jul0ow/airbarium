@@ -15,6 +15,9 @@ garage-meta/
 garage-data/
 
 .claude/scheduled_tasks.lock
+# Worktrees created by Claude Code tooling carry their own nested biome.json,
+# which otherwise breaks `biome check .` ("nested root configuration").
+.claude/worktrees/
 
 # Helm secret overrides — never commit real secret values (use existingSecret in prod)
 *.secret.yaml

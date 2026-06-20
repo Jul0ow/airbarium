@@ -14,7 +14,11 @@ import {
   type SQL,
   sql,
 } from 'drizzle-orm';
-import { CONFIDENCE_THRESHOLD, SPECIMENS_BUCKET } from '@/config/constants';
+import {
+  CONFIDENCE_THRESHOLD,
+  PRESIGNED_URL_TTL_SECONDS,
+  SPECIMENS_BUCKET,
+} from '@/config/constants';
 import { db } from '@/db/client';
 import { identifications, type Specimen, species as speciesTable, specimens } from '@/db/schema';
 import { getObject, getPresignedUrl, putObject } from '@/lib/garage';
@@ -33,8 +37,6 @@ import { upsertFromPlantnet } from '@/services/species';
 import { scheduleEnrichment } from '@/services/species-enrichment';
 import { type Cursor, decodeCursor, encodeCursor } from '@/utils/cursor';
 import { AppError } from '@/utils/errors';
-
-const PHOTO_URL_TTL_SECONDS = 3600;
 
 // Drizzle parameterizes the bound value, so this is purely about LIKE
 // pattern semantics: user input "50%" should match the literal "50%",
@@ -71,7 +73,7 @@ async function toSpecimenResponse(s: Specimen): Promise<SpecimenResponse> {
   const photo_url = await getPresignedUrl({
     bucket: SPECIMENS_BUCKET,
     key: s.photoUrl,
-    expiresInSeconds: PHOTO_URL_TTL_SECONDS,
+    expiresInSeconds: PRESIGNED_URL_TTL_SECONDS,
   });
   return {
     id: s.id,

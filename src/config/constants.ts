@@ -7,6 +7,19 @@ export const IDENTIFICATION_TEMP_TTL_MS = 24 * 60 * 60 * 1000;
 export const SPECIMENS_BUCKET = 'specimens';
 export const AVATARS_BUCKET = 'avatars';
 
+// Lifetime of the presigned S3 URLs returned in read responses (design §8.3: 1h).
+export const PRESIGNED_URL_TTL_SECONDS = 3600;
+
+// Allowed browser/mobile client origins. Single source of truth for both the
+// CORS middleware (app.ts) and Better Auth's trustedOrigins (better-auth.ts) —
+// CLAUDE.md requires these two lists to stay in sync; importing the same const
+// makes that a structural guarantee rather than a manual invariant.
+export const CLIENT_ORIGINS = [
+  'http://localhost:8081', // expo dev mobile
+  'http://localhost:19006', // expo web preview
+  'https://app.airbarium.app', // future web
+];
+
 export const SPECIMEN_SOFT_DELETE_RETENTION_DAYS = 30;
 export const PLANTNET_USAGE_RETENTION_DAYS = 7;
 // Aligned with IDENTIFICATION_TEMP_TTL_MS: a Garage object that is unreferenced
