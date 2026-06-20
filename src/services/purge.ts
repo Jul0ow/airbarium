@@ -16,7 +16,7 @@ import {
   specimens,
   users,
 } from '@/db/schema';
-import { deleteObject, listObjects } from '@/lib/garage';
+import { deleteObjects, listObjects } from '@/lib/garage';
 import { logger } from '@/middleware/logger';
 
 export type CategoryResult = {
@@ -33,17 +33,13 @@ function newCategoryResult(): CategoryResult {
 // Best-effort delete of the given keys in one bucket. Failures are logged and
 // counted, never thrown — a Garage outage must not fail the purge.
 async function purgeGarageKeys(bucket: string, keys: string[], res: CategoryResult): Promise<void> {
-  const settled = await Promise.allSettled(keys.map((key) => deleteObject({ bucket, key })));
-  keys.forEach((key, i) => {
-    const s = settled[i];
-    if (!s) return;
-    if (s.status === 'fulfilled') {
-      res.garageDeleted++;
-    } else {
-      res.garageFailed++;
-      logger.warn({ err: s.reason, bucket, key }, 'cron.purge: garage delete failed');
-    }
-  });
+  if (keys.length === 0) return;
+  const { deleted, errors } = await deleteObjects({ bucket, keys });
+  res.garageDeleted += deleted.length;
+  for (const e of errors) {
+    res.garageFailed++;
+    logger.warn({ err: e.message, bucket, key: e.key }, 'cron.purge: garage delete failed');
+  }
 }
 
 export async function purgeExpiredIdentifications(): Promise<CategoryResult> {
@@ -195,16 +191,21 @@ export async function reconcileOrphans(): Promise<ReconcileResult> {
       continue;
     }
     res.scanned += objects.length;
+    const orphanKeys: string[] = [];
     for (const obj of objects) {
       if (refs.has(obj.key)) continue;
       if (now - obj.lastModified.getTime() <= ORPHAN_GRACE_MS) continue;
-      try {
-        await deleteObject({ bucket, key: obj.key });
-        res.orphansDeleted++;
-      } catch (err) {
-        res.garageFailed++;
-        logger.warn({ err, bucket, key: obj.key }, 'cron.reconcileOrphans: orphan delete failed');
-      }
+      orphanKeys.push(obj.key);
+    }
+    if (orphanKeys.length === 0) continue;
+    const { deleted, errors } = await deleteObjects({ bucket, keys: orphanKeys });
+    res.orphansDeleted += deleted.length;
+    for (const e of errors) {
+      res.garageFailed++;
+      logger.warn(
+        { err: e.message, bucket, key: e.key },
+        'cron.reconcileOrphans: orphan delete failed',
+      );
     }
   }
   return res;

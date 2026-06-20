@@ -34,6 +34,18 @@ export const specimens = pgTable(
     index('specimens_user_species_active_idx')
       .on(t.userId, t.speciesId)
       .where(sql`${t.deletedAt} IS NULL`),
+    // Cover the two non-default list sorts so pagination is an index scan, not a
+    // filesort. Column order/direction mirrors services/specimens.ts orderBy:
+    //   created_at_desc -> ORDER BY created_at DESC, id DESC
+    //   name_asc        -> ORDER BY identified_name ASC NULLS LAST, id ASC
+    // (a default ASC btree index already orders NULLS LAST). Partial on the same
+    // active-rows predicate the list always applies.
+    index('specimens_user_created_idx')
+      .on(t.userId, t.createdAt.desc(), t.id.desc())
+      .where(sql`${t.deletedAt} IS NULL`),
+    index('specimens_user_name_idx')
+      .on(t.userId, t.identifiedName, t.id)
+      .where(sql`${t.deletedAt} IS NULL`),
   ],
 );
 

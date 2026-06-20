@@ -371,8 +371,15 @@ export async function create(userId: string, input: CreateInput): Promise<Create
   if (scientificNames.length === 0) {
     throw new AppError('INVALID_CHOICE', 'identification has no candidate species', 400);
   }
+  // Project the snapshot columns up front so the chosen species' commonName/family
+  // come straight from this pool — no second per-row SELECT on the create path.
   const pool = await db
-    .select({ id: speciesTable.id, scientificName: speciesTable.scientificName })
+    .select({
+      id: speciesTable.id,
+      scientificName: speciesTable.scientificName,
+      commonName: speciesTable.commonName,
+      family: speciesTable.family,
+    })
     .from(speciesTable)
     .where(inArray(speciesTable.scientificName, scientificNames));
   const poolIds = new Set(pool.map((p) => p.id));
@@ -427,17 +434,9 @@ export async function create(userId: string, input: CreateInput): Promise<Create
     (r) => r.species?.scientificNameWithoutAuthor === chosenPool.scientificName,
   );
   const chosenScore = chosenIdx >= 0 ? (rawResults[chosenIdx]?.score ?? null) : null;
-  const [chosenSpeciesRow] = await db
-    .select()
-    .from(speciesTable)
-    .where(eq(speciesTable.id, input.chosen_species_id));
-  if (!chosenSpeciesRow) {
-    throw new AppError(
-      'INVARIANT',
-      `species ${input.chosen_species_id} disappeared between pool lookup and snapshot`,
-      500,
-    );
-  }
+  // chosenPool already carries the snapshot columns (commonName/family) from the
+  // widened pool projection above — no extra round-trip needed.
+  const chosenSpeciesRow = chosenPool;
 
   // 6. Transactional insert + promote.
   // The idempotence check at step 1 has a TOCTOU window: two concurrent POSTs

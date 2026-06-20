@@ -118,9 +118,10 @@ describe('purgeExpiredIdentifications', () => {
     });
 
     const restore = __setGarageForTests({
-      deleteObject: async () => {
-        throw new Error('garage down');
-      },
+      deleteObjects: async ({ keys }) => ({
+        deleted: [],
+        errors: keys.map((key) => ({ key, message: 'garage down' })),
+      }),
     });
     try {
       const res = await purgeExpiredIdentifications();
@@ -234,7 +235,7 @@ describe('reconcileOrphans', () => {
       contentType: 'image/jpeg',
     });
 
-    // Stub only the listing (to control lastModified); deleteObject stays real.
+    // Stub only the listing (to control lastModified); deleteObjects stays real.
     const restore = __setGarageForTests({
       listObjects: async ({ bucket }) => {
         if (bucket !== 'specimens') return [];
@@ -269,8 +270,9 @@ describe('reconcileOrphans', () => {
       listObjects: async () => {
         throw new Error('list down');
       },
-      deleteObject: async () => {
+      deleteObjects: async ({ keys }) => {
         deleteCalled = true;
+        return { deleted: keys, errors: [] };
       },
     });
     try {

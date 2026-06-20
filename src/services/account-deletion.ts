@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm';
 import { AVATARS_BUCKET, SPECIMENS_BUCKET } from '@/config/constants';
 import { db } from '@/db/client';
 import { identifications, rateLimit, specimens, users, verification } from '@/db/schema';
-import { deleteObject } from '@/lib/garage';
+import { deleteObjects } from '@/lib/garage';
 import { logger } from '@/middleware/logger';
 
 /**
@@ -41,25 +41,23 @@ export async function deleteAccount(userId: string, userEmail: string): Promise<
     };
   });
 
-  // 2. Best-effort Garage purge, deduplicated, outside the transaction.
-  const seen = new Set<string>();
-  const targets: Array<{ bucket: string; key: string }> = [];
-  for (const key of [...specimenKeys, ...identificationKeys]) {
-    if (!seen.has(key)) {
-      seen.add(key);
-      targets.push({ bucket: SPECIMENS_BUCKET, key });
-    }
-  }
-  if (avatarKey) targets.push({ bucket: AVATARS_BUCKET, key: avatarKey });
+  // 2. Best-effort Garage purge, deduplicated and batched, outside the transaction.
+  // Specimen + identification photos share the `specimens` bucket, so one batched
+  // DeleteObjects per bucket replaces N per-object round-trips (matters for accounts
+  // with hundreds of specimens).
+  const specimenBucketKeys = [...new Set([...specimenKeys, ...identificationKeys])];
+  const byBucket: Array<{ bucket: string; keys: string[] }> = [
+    { bucket: SPECIMENS_BUCKET, keys: specimenBucketKeys },
+  ];
+  if (avatarKey) byBucket.push({ bucket: AVATARS_BUCKET, keys: [avatarKey] });
 
-  const results = await Promise.allSettled(targets.map((t) => deleteObject(t)));
-  results.forEach((res, i) => {
-    if (res.status === 'rejected') {
-      const target = targets[i];
+  for (const { bucket, keys } of byBucket) {
+    const { errors } = await deleteObjects({ bucket, keys });
+    for (const e of errors) {
       logger.warn(
-        { err: res.reason, bucket: target?.bucket, key: target?.key, userId },
+        { err: e.message, bucket, key: e.key, userId },
         'account-deletion: garage purge failed',
       );
     }
-  });
+  }
 }
