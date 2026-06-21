@@ -1,0 +1,1346 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Airbarium API",
+    "version": "1.0.0",
+    "description": "Flower identification backend. Auth routes (/v1/auth/*) use Better Auth and are documented separately."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3000",
+      "description": "Local dev"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "Bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Better Auth bearer token from POST /v1/auth/sign-in/email"
+      }
+    },
+    "schemas": {
+      "Me": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "018f9b2c-…"
+          },
+          "email": {
+            "type": "string",
+            "example": "jane@example.com"
+          },
+          "email_verified": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string",
+            "example": "Jane"
+          },
+          "avatar_url": {
+            "type": ["string", "null"]
+          },
+          "created_at": {
+            "type": "string",
+            "example": "2026-06-21T10:00:00.000Z"
+          }
+        },
+        "required": ["id", "email", "email_verified", "name", "avatar_url", "created_at"]
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "example": "SPECIMEN_NOT_FOUND"
+              },
+              "message": {
+                "type": "string",
+                "example": "specimen … not found"
+              },
+              "details": {}
+            },
+            "required": ["code", "message"]
+          }
+        },
+        "required": ["error"]
+      },
+      "PatchMe": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "AvatarUpload": {
+        "type": "object",
+        "properties": {
+          "avatar_url": {
+            "type": "string"
+          }
+        },
+        "required": ["avatar_url"]
+      },
+      "AvatarUploadBody": {
+        "type": "object",
+        "properties": {
+          "photo": {
+            "type": "string",
+            "format": "binary",
+            "description": "JPEG ≤ 2 MB"
+          }
+        },
+        "required": ["photo"]
+      },
+      "IdentificationResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "top_match": {
+            "$ref": "#/components/schemas/IdentificationCandidate"
+          },
+          "alternatives": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IdentificationCandidate"
+            }
+          },
+          "confidence_threshold": {
+            "type": "number",
+            "example": 0.7
+          },
+          "auto_pickable": {
+            "type": "boolean"
+          }
+        },
+        "required": ["id", "top_match", "alternatives", "confidence_threshold", "auto_pickable"]
+      },
+      "IdentificationCandidate": {
+        "type": "object",
+        "properties": {
+          "species_id": {
+            "type": "string"
+          },
+          "common_name": {
+            "type": ["string", "null"]
+          },
+          "scientific_name": {
+            "type": "string"
+          },
+          "family": {
+            "type": ["string", "null"]
+          },
+          "confidence": {
+            "type": "number"
+          },
+          "reference_photo_url": {
+            "type": ["string", "null"]
+          },
+          "description": {
+            "type": ["string", "null"]
+          }
+        },
+        "required": [
+          "species_id",
+          "common_name",
+          "scientific_name",
+          "family",
+          "confidence",
+          "reference_photo_url",
+          "description"
+        ]
+      },
+      "IdentifyMultipart": {
+        "type": "object",
+        "properties": {
+          "photo": {
+            "type": "string",
+            "format": "binary",
+            "description": "JPEG ≤ 2 MB"
+          },
+          "date_taken": {
+            "type": "string"
+          },
+          "gps_lat": {
+            "type": "string"
+          },
+          "gps_lng": {
+            "type": "string"
+          }
+        },
+        "required": ["photo"]
+      },
+      "Specimen": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "identification_id": {
+            "type": ["string", "null"]
+          },
+          "species_id": {
+            "type": ["string", "null"]
+          },
+          "photo_url": {
+            "type": "string",
+            "description": "Presigned Garage URL, valid 1h"
+          },
+          "identified_name": {
+            "type": ["string", "null"]
+          },
+          "scientific_name": {
+            "type": ["string", "null"]
+          },
+          "family": {
+            "type": ["string", "null"]
+          },
+          "confidence_score": {
+            "type": ["number", "null"]
+          },
+          "identification_source": {
+            "type": "string",
+            "enum": ["plantnet_auto", "plantnet_picked", "none"]
+          },
+          "lat": {
+            "type": ["number", "null"]
+          },
+          "lng": {
+            "type": ["number", "null"]
+          },
+          "location_label": {
+            "type": ["string", "null"]
+          },
+          "user_notes": {
+            "type": ["string", "null"]
+          },
+          "collected_at": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "identification_id",
+          "species_id",
+          "photo_url",
+          "identified_name",
+          "scientific_name",
+          "family",
+          "confidence_score",
+          "identification_source",
+          "lat",
+          "lng",
+          "location_label",
+          "user_notes",
+          "collected_at",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      "CreateSpecimenJson": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Client-generated UUIDv7 (idempotent)"
+          },
+          "identification_id": {
+            "type": "string"
+          },
+          "chosen_species_id": {
+            "type": "string"
+          },
+          "identification_source": {
+            "type": "string",
+            "enum": ["plantnet_auto", "plantnet_picked"]
+          },
+          "collected_at": {
+            "type": "string",
+            "example": "2026-06-21T10:00:00.000Z"
+          },
+          "lat": {
+            "type": "number"
+          },
+          "lng": {
+            "type": "number"
+          },
+          "location_label": {
+            "type": "string"
+          },
+          "user_notes": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "identification_id",
+          "chosen_species_id",
+          "identification_source",
+          "collected_at"
+        ]
+      },
+      "CreateSpecimenMultipart": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "photo": {
+            "type": "string",
+            "format": "binary"
+          },
+          "identification_source": {
+            "type": "string",
+            "enum": ["none"]
+          },
+          "collected_at": {
+            "type": "string"
+          },
+          "lat": {
+            "type": "number"
+          },
+          "lng": {
+            "type": "number"
+          },
+          "location_label": {
+            "type": "string"
+          },
+          "user_notes": {
+            "type": "string"
+          }
+        },
+        "required": ["id", "photo", "identification_source", "collected_at"]
+      },
+      "SpecimenList": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Specimen"
+            }
+          },
+          "next_cursor": {
+            "type": ["string", "null"],
+            "description": "Opaque base64url cursor; null when no further page"
+          }
+        },
+        "required": ["data", "next_cursor"]
+      },
+      "SpecimenStats": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "integer"
+          },
+          "distinct_species": {
+            "type": "integer"
+          }
+        },
+        "required": ["total", "distinct_species"]
+      },
+      "PatchSpecimen": {
+        "type": "object",
+        "properties": {
+          "user_notes": {
+            "type": ["string", "null"]
+          },
+          "location_label": {
+            "type": ["string", "null"]
+          }
+        }
+      },
+      "Species": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "common_name": {
+            "type": ["string", "null"]
+          },
+          "scientific_name": {
+            "type": "string",
+            "example": "Bellis perennis"
+          },
+          "family": {
+            "type": ["string", "null"]
+          },
+          "description": {
+            "type": ["string", "null"]
+          },
+          "reference_photo_url": {
+            "type": ["string", "null"]
+          },
+          "wikipedia_url": {
+            "type": ["string", "null"]
+          }
+        },
+        "required": [
+          "id",
+          "common_name",
+          "scientific_name",
+          "family",
+          "description",
+          "reference_photo_url",
+          "wikipedia_url"
+        ]
+      },
+      "Health": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["ok", "degraded"]
+          },
+          "db": {
+            "type": "string",
+            "enum": ["ok", "down"]
+          },
+          "garage": {
+            "type": "string",
+            "enum": ["ok", "down"]
+          }
+        },
+        "required": ["status", "db"]
+      }
+    },
+    "parameters": {}
+  },
+  "paths": {
+    "/v1/me": {
+      "get": {
+        "tags": ["Profile"],
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "summary": "Current user profile",
+        "responses": {
+          "200": {
+            "description": "Profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": ["Profile"],
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "summary": "Update profile name",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchMe"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Profile"],
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "summary": "Delete account (RGPD hard delete: DB + Garage)",
+        "responses": {
+          "204": {
+            "description": "Account deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/me/avatar": {
+      "put": {
+        "tags": ["Profile"],
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "summary": "Upload avatar (JPEG)",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/AvatarUploadBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Avatar uploaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AvatarUpload"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid upload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Payload too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported media type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Profile"],
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "summary": "Remove avatar",
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/identifications": {
+      "post": {
+        "tags": ["Identifications"],
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "summary": "Identify a flower photo via PlantNet",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/IdentifyMultipart"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Identification candidates",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentificationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid EXIF / upload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Payload too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported media type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "No PlantNet match",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Daily PlantNet quota exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "PlantNet upstream unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/specimens": {
+      "post": {
+        "tags": ["Specimens"],
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "summary": "Create a specimen (online JSON or offline-sync multipart)",
+        "description": "Idempotent on client-generated `id`. JSON body promotes an identification; multipart body uploads a photo for offline sync (server identifies best-effort).",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSpecimenJson"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSpecimenMultipart"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Idempotent replay of existing specimen",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Specimen"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Specimen created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Specimen"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation / threshold / choice error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Identification not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Id belongs to another user / already promoted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Identification expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Payload too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported media type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": ["Specimens"],
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "summary": "List specimens (cursor-paginated)",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "example": 20
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": ["collected_at_desc", "created_at_desc", "name_asc"]
+            },
+            "required": false,
+            "name": "sort",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "ILIKE search on identified_name"
+            },
+            "required": false,
+            "description": "ILIKE search on identified_name",
+            "name": "q",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "family",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "date_from",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "date_to",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Page of specimens",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpecimenList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/specimens/stats": {
+      "get": {
+        "tags": ["Specimens"],
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "summary": "Library stats",
+        "responses": {
+          "200": {
+            "description": "Counts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpecimenStats"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/specimens/{id}": {
+      "get": {
+        "tags": ["Specimens"],
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "summary": "Get a specimen (presigned photo URL)",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Specimen",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Specimen"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": ["Specimens"],
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "summary": "Update user_notes / location_label",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchSpecimen"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated specimen",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Specimen"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid patch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Specimens"],
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "summary": "Soft-delete a specimen",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/specimens/{id}/identify": {
+      "post": {
+        "tags": ["Specimens"],
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "summary": "Retry identification on an unidentified specimen",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Specimen updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Specimen"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Already identified",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "No PlantNet match",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Quota exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "PlantNet unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/species/{id}": {
+      "get": {
+        "tags": ["Species"],
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "summary": "Species detail",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Species",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Species"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/health": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Liveness (DB only)",
+        "responses": {
+          "200": {
+            "description": "Healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Degraded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/health/ready": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Readiness (DB + Garage)",
+        "responses": {
+          "200": {
+            "description": "Ready",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Not ready",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "webhooks": {}
+}

@@ -69,6 +69,11 @@ jobs:
       - name: Lint
         run: nix develop --command bun run lint
 
+      - name: OpenAPI spec is committed & up to date
+        run: |
+          nix develop --command bun run openapi:gen
+          git diff --exit-code openapi.json
+
       - name: Start Garage
         run: docker compose up -d garage garage-init
 

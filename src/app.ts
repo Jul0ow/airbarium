@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { OpenAPIHono } from '@hono/zod-openapi';
 import { bodyLimit } from 'hono/body-limit';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
@@ -10,12 +10,13 @@ import { errorHandler } from '@/middleware/error-handler';
 import { httpLogger } from '@/middleware/logger';
 import { metrics } from '@/middleware/metrics';
 import { requestId } from '@/middleware/request-id';
+import { registerOpenApiDoc } from '@/openapi-doc';
 import { routes } from '@/routes';
 import metricsRoute from '@/routes/metrics';
 import { AppError, NotFoundError } from '@/utils/errors';
 
 export const createApp = () => {
-  const app = new Hono<AppEnv>();
+  const app = new OpenAPIHono<AppEnv>();
 
   app.use('*', requestId());
   app.use('*', httpLogger());
@@ -53,6 +54,11 @@ export const createApp = () => {
 
   app.route('/', metricsRoute);
   app.route('/v1', routes);
+
+  // OpenAPI contract (/openapi.json) + Scalar docs (/docs). Registered after the
+  // route mounts and before notFound so the doc endpoints resolve. Pure
+  // documentation — does not touch the handlers above.
+  registerOpenApiDoc(app);
 
   app.notFound(() => {
     throw new NotFoundError('Route not found');
