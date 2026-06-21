@@ -14,7 +14,11 @@ import {
   type SQL,
   sql,
 } from 'drizzle-orm';
-import { CONFIDENCE_THRESHOLD, SPECIMENS_BUCKET } from '@/config/constants';
+import {
+  CONFIDENCE_THRESHOLD,
+  PRESIGNED_URL_TTL_SECONDS,
+  SPECIMENS_BUCKET,
+} from '@/config/constants';
 import { db } from '@/db/client';
 import { identifications, type Specimen, species as speciesTable, specimens } from '@/db/schema';
 import { getObject, getPresignedUrl, putObject } from '@/lib/garage';
@@ -33,8 +37,6 @@ import { upsertFromPlantnet } from '@/services/species';
 import { scheduleEnrichment } from '@/services/species-enrichment';
 import { type Cursor, decodeCursor, encodeCursor } from '@/utils/cursor';
 import { AppError } from '@/utils/errors';
-
-const PHOTO_URL_TTL_SECONDS = 3600;
 
 // Drizzle parameterizes the bound value, so this is purely about LIKE
 // pattern semantics: user input "50%" should match the literal "50%",
@@ -71,7 +73,7 @@ async function toSpecimenResponse(s: Specimen): Promise<SpecimenResponse> {
   const photo_url = await getPresignedUrl({
     bucket: SPECIMENS_BUCKET,
     key: s.photoUrl,
-    expiresInSeconds: PHOTO_URL_TTL_SECONDS,
+    expiresInSeconds: PRESIGNED_URL_TTL_SECONDS,
   });
   return {
     id: s.id,
@@ -371,8 +373,15 @@ export async function create(userId: string, input: CreateInput): Promise<Create
   if (scientificNames.length === 0) {
     throw new AppError('INVALID_CHOICE', 'identification has no candidate species', 400);
   }
+  // Project the snapshot columns up front so the chosen species' commonName/family
+  // come straight from this pool — no second per-row SELECT on the create path.
   const pool = await db
-    .select({ id: speciesTable.id, scientificName: speciesTable.scientificName })
+    .select({
+      id: speciesTable.id,
+      scientificName: speciesTable.scientificName,
+      commonName: speciesTable.commonName,
+      family: speciesTable.family,
+    })
     .from(speciesTable)
     .where(inArray(speciesTable.scientificName, scientificNames));
   const poolIds = new Set(pool.map((p) => p.id));
@@ -427,17 +436,9 @@ export async function create(userId: string, input: CreateInput): Promise<Create
     (r) => r.species?.scientificNameWithoutAuthor === chosenPool.scientificName,
   );
   const chosenScore = chosenIdx >= 0 ? (rawResults[chosenIdx]?.score ?? null) : null;
-  const [chosenSpeciesRow] = await db
-    .select()
-    .from(speciesTable)
-    .where(eq(speciesTable.id, input.chosen_species_id));
-  if (!chosenSpeciesRow) {
-    throw new AppError(
-      'INVARIANT',
-      `species ${input.chosen_species_id} disappeared between pool lookup and snapshot`,
-      500,
-    );
-  }
+  // chosenPool already carries the snapshot columns (commonName/family) from the
+  // widened pool projection above — no extra round-trip needed.
+  const chosenSpeciesRow = chosenPool;
 
   // 6. Transactional insert + promote.
   // The idempotence check at step 1 has a TOCTOU window: two concurrent POSTs
@@ -723,9 +724,15 @@ async function recoverFromPkViolation(
 // postgres.js surfaces Postgres errors as objects with `.code` and
 // `.constraint_name`. 23505 is unique_violation; we only recover on the
 // specimens PK (other unique constraints, if added later, should not silently
-// turn into idempotent replays).
+// turn into idempotent replays). Drizzle wraps driver errors in a
+// DrizzleQueryError with the original pg error on `.cause`, so we inspect both
+// the thrown error and its cause.
 function isUniquePkViolation(err: unknown): boolean {
-  if (!err || typeof err !== 'object') return false;
-  const e = err as { code?: unknown; constraint_name?: unknown };
-  return e.code === '23505' && e.constraint_name === 'specimens_pkey';
+  for (const e of [err, (err as { cause?: unknown } | null)?.cause]) {
+    if (e && typeof e === 'object') {
+      const pe = e as { code?: unknown; constraint_name?: unknown };
+      if (pe.code === '23505' && pe.constraint_name === 'specimens_pkey') return true;
+    }
+  }
+  return false;
 }

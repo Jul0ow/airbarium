@@ -7,6 +7,7 @@ import {
   GLOBAL_RATE_LIMIT_WINDOW_MS,
 } from '@/config/constants';
 import { rateLimit } from '@/db/schema';
+import { register } from '@/lib/metrics';
 import { authMiddleware } from '@/middleware/auth';
 import { errorHandler } from '@/middleware/error-handler';
 import { httpLogger } from '@/middleware/logger';
@@ -47,6 +48,15 @@ function buildRateLimitTestApp() {
   app.get('/probe', authMiddleware(), globalRateLimit(), (c) => c.json({ ok: true }));
   app.onError(errorHandler);
   return app;
+}
+
+// Current value of the fail-open counter (unlabelled), parsed from /metrics text.
+async function failOpenMetric(): Promise<number> {
+  const text = await register.metrics();
+  const line = text
+    .split('\n')
+    .find((l) => l.startsWith('airbarium_rate_limit_fail_open_total ') && !l.startsWith('#'));
+  return line ? Number(line.split(' ')[1]) : 0;
 }
 
 // Seed a rate_limit row for a specific key and windowStart bucket with a given count.
@@ -131,6 +141,7 @@ describe('globalRateLimit middleware', () => {
     });
 
     try {
+      const before = await failOpenMetric();
       const app = buildRateLimitTestApp();
       const res = await app.request('/probe', {
         headers: bearerHeaders(u.sessionToken),
@@ -140,6 +151,8 @@ describe('globalRateLimit middleware', () => {
       expect(res.status).toBe(200);
       const body = (await res.json()) as { ok: boolean };
       expect(body.ok).toBe(true);
+      // ...and the fail-open is observable as a metric (alertable degradation).
+      expect(await failOpenMetric()).toBe(before + 1);
     } finally {
       restore();
     }

@@ -39,7 +39,11 @@ export const errorHandler: ErrorHandler<AppEnv> = (err, c) => {
   const log = c.get('log');
 
   if (err instanceof AppError) {
-    log.warn({ code: err.code, status: err.status, details: err.details }, err.message);
+    // Route by status (design §10.1): 5xx are server faults (e.g. INVARIANT data
+    // corruption) and must be `error`, not buried at `warn` with the 4xx noise.
+    const fields = { code: err.code, status: err.status, details: err.details };
+    if (err.status >= 500) log.error(fields, err.message);
+    else log.warn(fields, err.message);
     return c.json(
       {
         error: {
@@ -54,7 +58,8 @@ export const errorHandler: ErrorHandler<AppEnv> = (err, c) => {
 
   if (err instanceof HTTPException) {
     const code = httpStatusCode(err.status);
-    log.warn({ code, status: err.status }, err.message);
+    if (err.status >= 500) log.error({ code, status: err.status }, err.message);
+    else log.warn({ code, status: err.status }, err.message);
     return c.json(
       { error: { code, message: err.message || code } },
       err.status as ContentfulStatusCode,

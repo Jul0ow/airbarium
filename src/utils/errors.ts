@@ -1,5 +1,20 @@
 export type ErrorDetails = Record<string, unknown> | undefined;
 
+// Structural shape of a Zod issue — avoids coupling to a specific ZodError /
+// core $ZodError type across zod's public/internal boundary.
+type ZodIssueLike = { path: ReadonlyArray<PropertyKey>; code: string; message: string };
+
+/**
+ * Single, uniform shape for Zod validation issues surfaced in `error.details`.
+ * Used by every route/middleware that reports a validation failure so the mobile
+ * client sees one consistent `details.issues` format across all endpoints.
+ */
+export const zodIssues = (error: {
+  issues: ReadonlyArray<ZodIssueLike>;
+}): { issues: Array<Record<string, unknown>> } => ({
+  issues: error.issues.map((i) => ({ path: i.path, code: i.code, message: i.message })),
+});
+
 export class AppError extends Error {
   readonly code: string;
   readonly status: number;

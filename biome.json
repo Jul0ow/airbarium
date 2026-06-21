@@ -18,6 +18,7 @@
       "!**/pgdata",
       "!**/garage-meta",
       "!**/garage-data",
+      "!**/.claude",
       "!src/db/migrations/meta"
     ]
   },

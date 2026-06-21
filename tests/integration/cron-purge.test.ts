@@ -118,9 +118,10 @@ describe('purgeExpiredIdentifications', () => {
     });
 
     const restore = __setGarageForTests({
-      deleteObject: async () => {
-        throw new Error('garage down');
-      },
+      deleteObjects: async ({ keys }) => ({
+        deleted: [],
+        errors: keys.map((key) => ({ key, message: 'garage down' })),
+      }),
     });
     try {
       const res = await purgeExpiredIdentifications();
@@ -234,7 +235,7 @@ describe('reconcileOrphans', () => {
       contentType: 'image/jpeg',
     });
 
-    // Stub only the listing (to control lastModified); deleteObject stays real.
+    // Stub only the listing (to control lastModified); deleteObjects stays real.
     const restore = __setGarageForTests({
       listObjects: async ({ bucket }) => {
         if (bucket !== 'specimens') return [];
@@ -269,8 +270,9 @@ describe('reconcileOrphans', () => {
       listObjects: async () => {
         throw new Error('list down');
       },
-      deleteObject: async () => {
+      deleteObjects: async ({ keys }) => {
         deleteCalled = true;
+        return { deleted: keys, errors: [] };
       },
     });
     try {
@@ -392,6 +394,23 @@ describe('runPurgeCycle', () => {
       expect(res.expiredRateLimits.rowsDeleted).toBe(0);
       expect(res.staleAuthRateLimits.rowsDeleted).toBe(0);
       expect(res.orphanReconciliation.scanned).toBe(0);
+    } finally {
+      restore();
+    }
+  });
+
+  it('hadError=true when a step fails (drives the cron process.exit(1) signal)', async () => {
+    // A failing reconciliation (listObjects throws) marks that step errored; the
+    // cycle must propagate it via hadError so src/cron.ts exits non-zero.
+    const restore = __setGarageForTests({
+      listObjects: async () => {
+        throw new Error('garage list down');
+      },
+    });
+    try {
+      const res = await runPurgeCycle();
+      expect(res.orphanReconciliation.errored).toBe(true);
+      expect(res.hadError).toBe(true);
     } finally {
       restore();
     }

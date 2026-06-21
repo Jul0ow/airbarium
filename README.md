@@ -69,6 +69,8 @@ Lots 1 (Bootstrap), 2 (DB & migrations), 3 (Auth), 4 (Storage), 5 (Identificatio
    curl -sS http://localhost:3000/v1/me -H "Authorization: Bearer <token>"
    ```
 
+> **Durcissement** : les mots de passe doivent faire **10 à 128 caractères** (politique explicite, et non le défaut Better Auth). Les routes `/v1/auth/*` non authentifiées sont plafonnées à **64 KiB** de corps (`413 PAYLOAD_TOO_LARGE` au-delà) pour fermer un vecteur de DoS mémoire.
+
 ## Lot 4 — Storage quickstart
 
 Garage (S3-compatible) tourne dans le `docker compose` aux côtés de Postgres. Le service `garage-init` provisionne la layout cluster et importe la clé d'accès `GKDEV…` au premier démarrage — les valeurs sont déjà câblées dans `.env.example` (`GARAGE_ENDPOINT`, `GARAGE_ACCESS_KEY`, `GARAGE_SECRET_KEY`, `GARAGE_REGION`). Au boot, l'API crée le bucket `avatars` si absent (skip en `NODE_ENV=production`).
@@ -186,7 +188,7 @@ curl -sS http://localhost:3000/v1/species/<species_id> -H "Authorization: Bearer
 | `429` | `QUOTA_EXCEEDED` | 30 identifications atteintes pour aujourd'hui (UTC) |
 | `502` | `PLANTNET_UNAVAILABLE` | PlantNet 5xx/timeout/429 global — refund quota |
 
-`GET /v1/species/:id` renvoie `404 NOT_FOUND` si l'ID est inconnu.
+`GET /v1/species/:id` renvoie `404 NOT_FOUND` si l'ID est inconnu, et `404 SPECIES_NOT_FOUND` si l'ID n'est pas un UUID valide (validé à la route, jamais transmis à la colonne `uuid`).
 
 ## Lot 6 — Specimens quickstart
 
@@ -432,6 +434,7 @@ curl http://localhost:3000/v1/health/ready   # { "status": "ok", "db": "ok", "ga
 | `airbarium_http_request_duration_seconds` | Histogram | `method`, `route`, `status_code` | Latence HTTP. Le label `route` est le **motif** de route (`/v1/specimens/:id`), jamais le chemin brut — cardinalité bornée. Son `_count` sert aussi de compteur par status |
 | `airbarium_plantnet_requests_total` | Counter | `outcome` = `success`/`no_match`/`error`/`quota_exceeded` | Issues des identifications PlantNet. `quota_exceeded` = quota 30/jour/user atteint |
 | `airbarium_sync_ingest_total` | Counter | `result` = `identified`/`unidentified` | Spécimens ingérés via la sync offline, par résultat d'identification |
+| `airbarium_rate_limit_fail_open_total` | Counter | — | Incréments quand le rate-limiter global échoue en *fail-open* (table `rate_limit` dégradée → protection anti-abus affaiblie). À alerter |
 | `airbarium_users_total`, `airbarium_specimens_total` | Gauge | — | Totaux non-supprimés, calculés au scrape (`COUNT(*)`). Pour l'activité « du jour », utiliser `increase(<compteur>[1d])` côté PromQL — pas de gauge à reset journalier |
 | `process_*`, `nodejs_*` | — | — | Métriques process/Node par défaut (`collectDefaultMetrics`) |
 
@@ -479,7 +482,15 @@ Où `secrets.yaml` renseigne au minimum `secret.data.*` (ou `secret.create=false
 
 Le Job de migration s'exécute en hook `pre-install`/`pre-upgrade` avant le démarrage des pods API. Les sondes : liveness `/v1/health` (DB), readiness `/v1/health/ready` (DB + Garage).
 
-Toggles utiles : `httpRoute.enabled`, `httpRoute.parentRefs`/`hostnames`, `cron.schedule`, `api.replicaCount`, `migrations.enabled`, `secret.create`/`secret.existingSecret`.
+Toggles utiles : `httpRoute.enabled`, `httpRoute.parentRefs`/`hostnames`, `httpRoute.pathPrefixes`, `cron.schedule`, `api.replicaCount`, `migrations.enabled`, `migrations.resources`, `secret.create`/`secret.existingSecret`, `networkPolicy.enabled`, `automountServiceAccountToken`.
+
+### Durcissement (défense en profondeur)
+
+- **Exposition réseau** : l'`HTTPRoute` ne route que les préfixes de `httpRoute.pathPrefixes` (défaut `/v1`), donc `/` et `/metrics` ne sont **pas** joignables via la Gateway. `/metrics` n'a pas d'auth applicative : son exposition est contenue à l'infra.
+- **NetworkPolicy** (`networkPolicy.enabled=true`) : default-deny ingress/egress. Ingress autorisé depuis le namespace Gateway (`gatewayNamespaceSelector`) sur `http`, et depuis le namespace de scrape (`scrapeNamespaceSelector`) pour `/metrics` ; egress DNS + TCP/443 + `extraEgress` pour Postgres/Garage/SMTP en cluster.
+- **securityContext** : `runAsNonRoot` + UID/GID/fsGroup numériques (1000, l'utilisateur `bun` de l'image) + `seccompProfile: RuntimeDefault`, `readOnlyRootFilesystem`, `drop: [ALL]`.
+- **ServiceAccount** : `automountServiceAccountToken: false` (l'API/cron n'appellent jamais l'API Kubernetes).
+- **Secrets** : un Secret k8s n'est que du base64. En prod, préférez `secret.create=false` + `secret.existingSecret` géré par SealedSecrets/External-Secrets. Les fichiers d'override de secrets (`*.secret.yaml`, `values-prod.yaml`, `values-secrets.yaml`) sont git-ignorés.
 
 ### Vérification du chart
 

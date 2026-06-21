@@ -17,8 +17,9 @@ beforeEach(async () => {
   await truncateAll();
   deleteCalls = [];
   restoreGarage = __setGarageForTests({
-    deleteObject: async ({ bucket, key }) => {
-      deleteCalls.push({ bucket, key });
+    deleteObjects: async ({ bucket, keys }) => {
+      for (const key of keys) deleteCalls.push({ bucket, key });
+      return { deleted: keys, errors: [] };
     },
   });
 });
@@ -82,9 +83,10 @@ describe('deleteAccount', () => {
   it('swallows Garage errors and still purges the DB', async () => {
     restoreGarage();
     restoreGarage = __setGarageForTests({
-      deleteObject: async () => {
-        throw new Error('garage down');
-      },
+      deleteObjects: async ({ keys }) => ({
+        deleted: [],
+        errors: keys.map((key) => ({ key, message: 'garage down' })),
+      }),
     });
     const { id, email } = await seedUser();
 

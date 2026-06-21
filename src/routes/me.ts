@@ -10,7 +10,7 @@ import { deleteAccount } from '@/services/account-deletion';
 import { deleteAvatar, uploadAvatar } from '@/services/photo-storage';
 import { getMe, updateMe } from '@/services/profile';
 import { AppError } from '@/utils/errors';
-import { JPEG_BODY_LIMIT_BYTES, validateJpeg } from '@/utils/jpeg';
+import { JPEG_BODY_LIMIT_BYTES, readJpegUpload } from '@/utils/jpeg';
 
 const route = new Hono<AppEnv>();
 
@@ -42,18 +42,7 @@ route.put(
     }
 
     const form = await c.req.parseBody();
-    const photo = form.photo;
-    if (!(photo instanceof File)) {
-      throw new AppError('MISSING_FIELD', 'photo field is required', 400);
-    }
-    if (photo.type !== 'image/jpeg') {
-      throw new AppError('INVALID_CONTENT_TYPE', 'photo must be image/jpeg', 400, {
-        received: photo.type,
-      });
-    }
-
-    const buffer = new Uint8Array(await photo.arrayBuffer());
-    validateJpeg(buffer);
+    const buffer = await readJpegUpload(form.photo);
 
     const { avatarUrl } = await uploadAvatar(user.id, buffer);
     return c.json({ avatar_url: avatarUrl });

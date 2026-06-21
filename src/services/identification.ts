@@ -114,9 +114,15 @@ export async function identifyAndStore(
     return { species: pair.species, isNew: pair.isNew, result: r };
   };
 
-  const topPair = await upsertOne(topResult);
-  const altPairs: Pair[] = [];
-  for (const r of altResults) altPairs.push(await upsertOne(r));
+  // Upsert top + alternatives in parallel: distinct scientific_names => independent
+  // rows, so this saves 2 sequential DB round-trips on a path already gated by the
+  // ~10s PlantNet call. Promise.all preserves order, so altPairs keeps PlantNet's
+  // ranking. (Two results sharing a scientific_name would serialize on the same
+  // ON CONFLICT row — harmless and vanishingly rare from PlantNet.)
+  const [topPair, altPairs] = await Promise.all([
+    upsertOne(topResult),
+    Promise.all(altResults.map(upsertOne)),
+  ]);
 
   await db.insert(identifications).values({
     id: identificationId,

@@ -1,6 +1,7 @@
 import {
   CreateBucketCommand,
   DeleteObjectCommand,
+  DeleteObjectsCommand,
   GetObjectCommand,
   HeadBucketCommand,
   ListObjectsV2Command,
@@ -23,6 +24,19 @@ export type DeleteObjectInput = {
   bucket: string;
   key: string;
 };
+
+export type DeleteObjectsInput = {
+  bucket: string;
+  keys: string[];
+};
+
+export type DeleteObjectsResult = {
+  deleted: string[];
+  errors: Array<{ key: string; message?: string }>;
+};
+
+// S3 DeleteObjects accepts at most 1000 keys per request.
+const DELETE_OBJECTS_BATCH = 1000;
 
 export type GetObjectInput = {
   bucket: string;
@@ -47,6 +61,7 @@ type Impl = {
   putObject: (input: PutObjectInput) => Promise<void>;
   getObject: (input: GetObjectInput) => Promise<Uint8Array>;
   deleteObject: (input: DeleteObjectInput) => Promise<void>;
+  deleteObjects: (input: DeleteObjectsInput) => Promise<DeleteObjectsResult>;
   getPresignedUrl: (input: PresignInput) => Promise<string>;
   listObjects: (input: ListObjectsInput) => Promise<GarageObject[]>;
   pingGarage: () => Promise<void>;
@@ -115,6 +130,38 @@ const defaultImpl: Impl = {
     await getClient().send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
   },
 
+  // Batch delete (up to 1000 keys/request) for bulk purges (cron + RGPD account
+  // deletion). Never throws: a failed chunk maps every key in it to `errors`, so
+  // callers get a per-key outcome and a Garage outage can't abort the purge.
+  async deleteObjects({ bucket, keys }) {
+    const result: DeleteObjectsResult = { deleted: [], errors: [] };
+    if (keys.length === 0) return result;
+    const s3 = getClient();
+    for (let i = 0; i < keys.length; i += DELETE_OBJECTS_BATCH) {
+      const chunk = keys.slice(i, i + DELETE_OBJECTS_BATCH);
+      try {
+        const out = await s3.send(
+          new DeleteObjectsCommand({
+            Bucket: bucket,
+            Delete: { Objects: chunk.map((Key) => ({ Key })), Quiet: false },
+          }),
+        );
+        for (const d of out.Deleted ?? []) if (d.Key) result.deleted.push(d.Key);
+        for (const e of out.Errors ?? []) {
+          if (e.Key) {
+            result.errors.push(
+              e.Message === undefined ? { key: e.Key } : { key: e.Key, message: e.Message },
+            );
+          }
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        for (const key of chunk) result.errors.push({ key, message });
+      }
+    }
+    return result;
+  },
+
   async getPresignedUrl({ bucket, key, expiresInSeconds }) {
     return getSignedUrl(getClient(), new GetObjectCommand({ Bucket: bucket, Key: key }), {
       expiresIn: expiresInSeconds,
@@ -159,6 +206,7 @@ export const ensureBucket = (bucket: string) => impl.ensureBucket(bucket);
 export const putObject = (input: PutObjectInput) => impl.putObject(input);
 export const getObject = (input: GetObjectInput) => impl.getObject(input);
 export const deleteObject = (input: DeleteObjectInput) => impl.deleteObject(input);
+export const deleteObjects = (input: DeleteObjectsInput) => impl.deleteObjects(input);
 export const getPresignedUrl = (input: PresignInput) => impl.getPresignedUrl(input);
 export const listObjects = (input: ListObjectsInput) => impl.listObjects(input);
 export const pingGarage = () => impl.pingGarage();

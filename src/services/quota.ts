@@ -24,7 +24,7 @@ export async function incrementOrThrow(userId: string): Promise<void> {
     })
     .returning({ count: plantnetUsage.count });
 
-  if (!row) throw new Error('quota: insert returned no row');
+  if (!row) throw new AppError('INVARIANT', 'quota: insert returned no row', 500);
 
   if (row.count > DAILY_PLANTNET_QUOTA) {
     await refund(userId);

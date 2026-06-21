@@ -1,0 +1,2 @@
+CREATE INDEX "specimens_user_created_idx" ON "specimens" USING btree ("user_id","created_at" DESC NULLS LAST,"id" DESC NULLS LAST) WHERE "specimens"."deleted_at" IS NULL;--> statement-breakpoint
+CREATE INDEX "specimens_user_name_idx" ON "specimens" USING btree ("user_id","identified_name","id") WHERE "specimens"."deleted_at" IS NULL;

@@ -1,11 +1,9 @@
 import { eq } from 'drizzle-orm';
+import { AVATARS_BUCKET, PRESIGNED_URL_TTL_SECONDS } from '@/config/constants';
 import { db } from '@/db/client';
 import { users } from '@/db/schema';
 import { deleteObject, getPresignedUrl, putObject } from '@/lib/garage';
 import { logger } from '@/middleware/logger';
-
-const AVATARS_BUCKET = 'avatars';
-const PRESIGN_TTL = 3600;
 
 function avatarKey(userId: string): string {
   return `${userId}.jpg`;
@@ -21,7 +19,7 @@ export async function uploadAvatar(
   const avatarUrl = await getPresignedUrl({
     bucket: AVATARS_BUCKET,
     key,
-    expiresInSeconds: PRESIGN_TTL,
+    expiresInSeconds: PRESIGNED_URL_TTL_SECONDS,
   });
   return { avatarUrl };
 }
@@ -49,6 +47,6 @@ export async function presignAvatar(userId: string): Promise<string> {
   return getPresignedUrl({
     bucket: AVATARS_BUCKET,
     key: avatarKey(userId),
-    expiresInSeconds: PRESIGN_TTL,
+    expiresInSeconds: PRESIGNED_URL_TTL_SECONDS,
   });
 }

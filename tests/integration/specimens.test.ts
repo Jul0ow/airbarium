@@ -428,10 +428,31 @@ describe('GET /v1/specimens/:id', () => {
     });
 
     const u2 = await makeUser('g-b');
-    const res = await app.request(`/v1/specimens/${sid}`, {
+    // Another user must not be able to read, modify or delete u1's specimen:
+    // every accessor is owner-scoped, so all three read as 404 (not 403).
+    const getRes = await app.request(`/v1/specimens/${sid}`, {
       headers: bearerHeaders(u2.sessionToken),
     });
-    expect(res.status).toBe(404);
+    expect(getRes.status).toBe(404);
+
+    const patchRes = await app.request(`/v1/specimens/${sid}`, {
+      method: 'PATCH',
+      headers: { ...bearerHeaders(u2.sessionToken), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_notes: 'hijack' }),
+    });
+    expect(patchRes.status).toBe(404);
+
+    const delRes = await app.request(`/v1/specimens/${sid}`, {
+      method: 'DELETE',
+      headers: bearerHeaders(u2.sessionToken),
+    });
+    expect(delRes.status).toBe(404);
+
+    // And the specimen still belongs to u1 afterwards.
+    const stillThere = await app.request(`/v1/specimens/${sid}`, {
+      headers: bearerHeaders(u1.sessionToken),
+    });
+    expect(stillThere.status).toBe(200);
   });
 });
 

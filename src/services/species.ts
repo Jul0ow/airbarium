@@ -1,7 +1,7 @@
 import { eq, sql } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { type Species, species } from '@/db/schema';
-import { NotFoundError } from '@/utils/errors';
+import { AppError, NotFoundError } from '@/utils/errors';
 import { uuid7 } from '@/utils/uuid';
 
 export type SpeciesUpsertInput = {
@@ -61,7 +61,7 @@ export async function upsertFromPlantnet(
   `);
 
   const row = rows[0];
-  if (!row) throw new Error('species.upsertFromPlantnet: no row returned');
+  if (!row) throw new AppError('INVARIANT', 'species.upsertFromPlantnet: no row returned', 500);
 
   const isNew = row.is_new;
   const speciesRow: Species = {

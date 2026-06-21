@@ -1,6 +1,7 @@
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { bearer } from 'better-auth/plugins';
+import { CLIENT_ORIGINS } from '@/config/constants';
 import { env } from '@/config/env';
 import { db } from '@/db/client';
 import { account, authRateLimit, session, users, verification } from '@/db/schema';
@@ -13,7 +14,7 @@ export const auth = betterAuth({
   secret: env.BETTER_AUTH_SECRET,
   baseURL: env.BETTER_AUTH_URL,
   basePath: '/v1/auth',
-  trustedOrigins: ['http://localhost:8081', 'http://localhost:19006', 'https://app.airbarium.app'],
+  trustedOrigins: CLIENT_ORIGINS,
   database: drizzleAdapter(db, {
     provider: 'pg',
     schema: {
