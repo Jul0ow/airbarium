@@ -73,6 +73,7 @@ Optional: `PUSHGATEWAY_URL` (Lot 8d) — when set, the cron pushes purge metrics
 - **Password reset request endpoint is `/v1/auth/request-password-reset`** (BA's actual route). Older docs may say `/forget-password` — that path is not exposed by our BA version.
 - **Trusted origins and CORS origins must stay in sync** — both lists live in `src/auth/better-auth.ts` (`trustedOrigins`) and `src/app.ts` (`cors.origin`). Add new client origins to both.
 - **`db:migrate` / `db:generate` need a valid `.env`** — `drizzle.config.ts` imports the Zod-validated env, which requires `BETTER_AUTH_SECRET` (32+ chars). Run `bun run auth:secret` and paste it into `.env` before any migration, otherwise the config fails to load.
+- **OpenAPI contract is generated & committed** — the API exposes a 3.1 spec at `/openapi.json` (+ Scalar docs at `/docs`), built with `@hono/zod-openapi`. Component schemas live in `src/schemas/openapi.ts`, path registration in `src/openapi-doc.ts`. This documentation layer is **decoupled from the handlers** (it does not validate/intercept traffic — bespoke per-route error codes stay intact). The spec is snapshotted in `openapi.json`; **after any route/response change run `bun run openapi:gen`** — CI fails on a stale `openapi.json` diff. Better Auth routes are intentionally absent (native `{ message, code }` shape; mobile uses the BA SDK). The mobile client is generated from this spec (`openapi-typescript` + `openapi-fetch`).
 
 ## 8-lot roadmap
 

@@ -31,12 +31,33 @@ Health check: `curl http://localhost:3000/v1/health` returns `{ "status": "ok", 
 | `bun run format` | `biome format --write .` |
 | `bun run db:generate` | Generate a Drizzle migration from schema changes |
 | `bun run db:migrate` | Apply migrations to the local DB |
+| `bun run openapi:gen` | Régénère le snapshot `openapi.json` depuis le code (puis le formate via Biome) |
 | `bun run cron` | Worker one-shot : exécute un cycle de purge puis se termine (`exit 0`, ou `exit 1` si une étape DB échoue) |
 | `bun run db:studio` | Open Drizzle Studio |
 
 ## Status
 
 Lots 1 (Bootstrap), 2 (DB & migrations), 3 (Auth), 4 (Storage), 5 (Identifications), 6 (Specimens online), 7 (Sync offline + retry identify), 8a (RGPD — suppression de compte), 8b (Cron de purge + réconciliation orphelins) et 8c (rate limiting Postgres) livrés — Hono skeleton, `/v1/health` with DB probe, Drizzle schemas for users/species/identifications/specimens/plantnet_usage/rate_limit, Better Auth wiring with email/password + mailer + bearer plugin, `GET /v1/me`, `PATCH /v1/me`, Garage S3 adapter with presigned URLs, `PUT/DELETE /v1/me/avatar`, `POST /v1/identifications` + `GET /v1/species/:id` with PlantNet + Wikipedia integration and per-user daily quota, `POST/GET/PATCH/DELETE /v1/specimens` + `GET /v1/specimens/stats` with idempotent UUIDv7, threshold-validated promotion, cursor-paginated lists and filters, soft delete, CI with Postgres + Garage services, `POST /v1/specimens` en multipart pour la sync offline avec identification synchrone best-effort + `POST /v1/specimens/:id/identify` pour retry (Lot 7), `DELETE /v1/me` RGPD hard delete avec purge Garage (Lot 8a), worker `bun run cron` one-shot + réconciliation des objets Garage orphelins (Lot 8b), rate limiting adossé Postgres — limite API globale 600 req / 10 min / user (fenêtre glissante) + limites Better Auth (sign-in/sign-up) persistées en base + nettoyage par le cron (Lot 8c), observabilité — endpoint `/metrics` Prometheus (histogramme HTTP, compteurs PlantNet + sync offline, gauges business, métriques process), sonde readiness `/v1/health/ready` (DB + Garage) et push des métriques de purge du cron vers un Pushgateway (Lot 8d). chart Helm `deploy/helm/airbarium-api/` (image Docker multi-stage Bun, Deployment API avec sondes liveness/readiness, CronJob de purge, Job de migration en hook pre-install/pre-upgrade, HTTPRoute Gateway API optionnel) + lint CI hadolint/helm/kubeconform (Lot 8e). **MVP backend complet — lots 1 à 8 livrés.** See the 8-lot roadmap in [`CLAUDE.md`](CLAUDE.md).
+
+## Contrat d'API (OpenAPI)
+
+Le backend expose une spec **OpenAPI 3.1** générée depuis le code (`@hono/zod-openapi`), destinée à piloter le client typé de l'app mobile.
+
+| Endpoint | Description |
+|---|---|
+| `GET /openapi.json` | Document OpenAPI 3.1 (non versionné, comme `/metrics`) |
+| `GET /docs` | Référence interactive Scalar |
+
+```bash
+bun run dev
+open http://localhost:3000/docs          # doc interactive
+curl http://localhost:3000/openapi.json  # spec brute
+```
+
+- La spec est **committée** dans [`openapi.json`](openapi.json) et régénérée via `bun run openapi:gen`. La CI rejoue la génération et **échoue sur un diff** (`git diff --exit-code openapi.json`) : le contrat committé ne peut pas dériver du code.
+- Les schemas de composants vivent dans `src/schemas/openapi.ts` ; l'enregistrement des chemins dans `src/openapi-doc.ts`. Cette doc est **découplée des handlers** (elle ne valide ni n'intercepte le trafic) : les codes d'erreur et la validation sur-mesure des routes restent intacts.
+- **Les routes Better Auth (`/v1/auth/*`) ne sont pas dans la spec** : elles renvoient la forme native Better Auth (`{ message, code }`). Le mobile les consomme via le client SDK `better-auth`, et le client OpenAPI typé pour tout le reste.
+- Côté mobile : générer le client avec `openapi-typescript` + `openapi-fetch` depuis ce `openapi.json`.
 
 ## Lot 3 — Auth quickstart
 
