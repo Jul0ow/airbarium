@@ -15,6 +15,7 @@ export const PRESIGNED_URL_TTL_SECONDS = 3600;
 // CLAUDE.md requires these two lists to stay in sync; importing the same const
 // makes that a structural guarantee rather than a manual invariant.
 export const CLIENT_ORIGINS = [
+  'airbariumfrontendmobile://', // expo native dev/prod build — app deep-link scheme (must match app.json `expo.scheme`)
   'http://localhost:8081', // expo dev mobile
   'http://localhost:19006', // expo web preview
   'https://app.airbarium.app', // future web

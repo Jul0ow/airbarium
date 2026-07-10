@@ -1,3 +1,4 @@
+import { expo } from '@better-auth/expo';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { bearer } from 'better-auth/plugins';
@@ -86,7 +87,10 @@ export const auth = betterAuth({
         env.NODE_ENV === 'test' ? { window: 60, max: 1000 } : { window: 60 * 60, max: 3 },
     },
   },
-  plugins: [bearer()],
+  // expo() must precede bearer(): its onRequest hook promotes the Expo client's
+  // `expo-origin` header to `origin` so the trusted-origin check (below) sees the
+  // app's deep-link scheme instead of an empty origin (native fetch sends no Origin).
+  plugins: [expo(), bearer()],
 });
 
 export type Auth = typeof auth;
