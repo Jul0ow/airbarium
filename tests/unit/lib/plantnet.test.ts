@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { register } from '@/lib/metrics';
 import {
   identify,
+  identifyRaw,
   PlantnetQuotaExhaustedError,
   PlantnetTimeoutError,
   PlantnetUnavailableError,
@@ -106,8 +107,56 @@ describe('identify', () => {
     expect(results[0]?.referencePhotoUrl).toBe('https://x/medium.jpg');
   });
 
+  // PlantNet's real no-match signal: 404 `Species not found`, never a 200 with
+  // an empty results array. Treating it as an upstream failure surfaced 502
+  // PLANTNET_UNAVAILABLE to users photographing anything the model can't name.
+  it('returns [] (not a throw) on 404 Species not found', async () => {
+    mockFetch(
+      () =>
+        new Response(
+          JSON.stringify({ statusCode: 404, error: 'Not Found', message: 'Species not found' }),
+          { status: 404 },
+        ),
+    );
+
+    const results = await identify(jpeg);
+
+    expect(results).toEqual([]);
+  });
+
+  it('keeps the 404 body in raw for the audit trail', async () => {
+    mockFetch(
+      () =>
+        new Response(
+          JSON.stringify({ statusCode: 404, error: 'Not Found', message: 'Species not found' }),
+          { status: 404 },
+        ),
+    );
+
+    const { raw, results } = await identifyRaw(jpeg);
+
+    expect(results).toEqual([]);
+    expect(raw.results).toEqual([]);
+    expect(raw.message).toBe('Species not found');
+  });
+
+  it('tolerates a non-JSON 404 body (proxy HTML error page)', async () => {
+    mockFetch(() => new Response('<html>gateway</html>', { status: 404 }));
+
+    const { raw, results } = await identifyRaw(jpeg);
+
+    expect(results).toEqual([]);
+    expect(raw.body).toBe('<html>gateway</html>');
+  });
+
   it('throws PlantnetUnavailableError on 500', async () => {
     mockFetch(() => new Response('boom', { status: 500 }));
+
+    await expect(identify(jpeg)).rejects.toBeInstanceOf(PlantnetUnavailableError);
+  });
+
+  it('throws PlantnetUnavailableError on a non-404 4xx (401 bad api key)', async () => {
+    mockFetch(() => new Response('bad key', { status: 401 }));
 
     await expect(identify(jpeg)).rejects.toBeInstanceOf(PlantnetUnavailableError);
   });
@@ -149,6 +198,16 @@ describe('identify metrics', () => {
 
   it('records outcome=no_match on empty results', async () => {
     mockFetch(() => new Response(JSON.stringify({ results: [] }), { status: 200 }));
+    await identify(jpeg);
+    expect(await register.metrics()).toContain(
+      'airbarium_plantnet_requests_total{outcome="no_match"} 1',
+    );
+  });
+
+  it('records outcome=no_match (not error) on a 404 Species not found', async () => {
+    mockFetch(
+      () => new Response(JSON.stringify({ message: 'Species not found' }), { status: 404 }),
+    );
     await identify(jpeg);
     expect(await register.metrics()).toContain(
       'airbarium_plantnet_requests_total{outcome="no_match"} 1',
