@@ -1,5 +1,6 @@
 import { env } from '@/config/env';
 import { recordPlantnet } from '@/lib/metrics';
+import { logger } from '@/middleware/logger';
 
 const PLANTNET_URL = 'https://my-api.plantnet.org/v2/identify/all';
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -56,6 +57,19 @@ type RawResult = {
   images?: Array<{ url?: { m?: string } }>;
 };
 
+// PlantNet's 404 body is JSON (`{statusCode, error, message}`), but a proxy in
+// front of it could return HTML. Keep the audit trail either way.
+function safeJson(body: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    return parsed !== null && typeof parsed === 'object'
+      ? (parsed as Record<string, unknown>)
+      : { body };
+  } catch {
+    return { body };
+  }
+}
+
 function mapResult(r: RawResult): PlantnetResult {
   return {
     scientificName: r.species.scientificNameWithoutAuthor,
@@ -100,7 +114,18 @@ const defaultImpl: Impl = {
       }
 
       if (res.status === 429) throw new PlantnetQuotaExhaustedError();
-      if (res.status >= 500) throw new PlantnetUnavailableError(res.status, await res.text());
+
+      // PlantNet signals "no species predicted" with a 404 `Species not found`,
+      // not with a 200 carrying an empty `results`. Same 404 covers a photo the
+      // model rejects as a non-plant (landscape, object, person). Both are a
+      // legitimate outcome of a legitimate call — not an upstream failure — so
+      // they surface as an empty result set, which callers map to NO_MATCH (422).
+      if (res.status === 404) {
+        const body = await res.text();
+        recordPlantnet('no_match');
+        return { raw: { ...safeJson(body), results: [] }, results: [] };
+      }
+
       if (!res.ok) throw new PlantnetUnavailableError(res.status, await res.text());
 
       const raw = (await res.json()) as PlantnetRawResponse;
@@ -109,6 +134,16 @@ const defaultImpl: Impl = {
       return { raw, results };
     } catch (err) {
       recordPlantnet('error');
+      // The AppError callers raise carries no upstream detail, so without this
+      // a PLANTNET_UNAVAILABLE log line is undiagnosable (which status? which
+      // body?). Body is truncated: PlantNet error payloads are small, but an
+      // HTML error page from a proxy in front of it would not be.
+      if (err instanceof PlantnetUnavailableError) {
+        logger.error(
+          { upstreamStatus: err.status, upstreamBody: err.body?.slice(0, 500) },
+          'plantnet.upstream_error',
+        );
+      }
       throw err;
     }
   },
